@@ -248,6 +248,19 @@ logs/
 # backend/data/private/
 # backend/uploads/
 
+# Large dataset files (exclude from Git due to size limits)
+backend/data/LevelX/
+backend/data/**/*.csv
+backend/data/**/*.png
+backend/data/**/*.jpg
+backend/data/**/*.jpeg
+backend/data/**/*.mp4
+backend/data/**/*.avi
+
+# Keep small OSM map files for testing
+!backend/data/highD_map/
+!backend/data/highD_map/*.osm
+
 # Config files with secrets (if any)
 config.local.py
 secrets.json
