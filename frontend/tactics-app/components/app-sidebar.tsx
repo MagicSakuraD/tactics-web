@@ -156,21 +156,20 @@ export function AppSidebar({
                               </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-3">
-                              {/* 开始仿真按钮 */}
-                              <Button
-                                onClick={onStartStream}
-                                disabled={!isConnected}
-                                variant="default"
-                                size="sm"
-                                className="w-full"
-                              >
-                                开始仿真
-                              </Button>
-                              
-                              {/* 播放控制按钮 */}
+                              {/* 智能播放控制按钮 */}
                               <div className="flex space-x-2">
                                 <Button
-                                  onClick={onPlayPause}
+                                  onClick={() => {
+                                    // 智能处理：根据状态决定是开始流还是播放/暂停
+                                    if (simulationStatus === "idle") {
+                                      // 如果是空闲状态，启动流并开始播放
+                                      onStartStream?.();
+                                    } else {
+                                      // 如果已经有流，只控制播放/暂停
+                                      onPlayPause?.();
+                                    }
+                                  }}
+                                  disabled={!isConnected}
                                   variant={
                                     simulationStatus === "running"
                                       ? "default"
@@ -179,16 +178,33 @@ export function AppSidebar({
                                   size="sm"
                                   className="flex-1"
                                 >
-                                  {simulationStatus === "running" ? (
-                                    <Pause className="h-3 w-3" />
+                                  {simulationStatus === "idle" ? (
+                                    <>
+                                      <Play className="h-3 w-3 mr-1" />
+                                      开始
+                                    </>
+                                  ) : simulationStatus === "running" ? (
+                                    <>
+                                      <Pause className="h-3 w-3 mr-1" />
+                                      暂停
+                                    </>
+                                  ) : simulationStatus === "paused" ? (
+                                    <>
+                                      <Play className="h-3 w-3 mr-1" />
+                                      继续
+                                    </>
                                   ) : (
-                                    <Play className="h-3 w-3" />
+                                    <>
+                                      <Play className="h-3 w-3 mr-1" />
+                                      重新开始
+                                    </>
                                   )}
                                 </Button>
                                 <Button
                                   onClick={onStop}
                                   variant="outline"
                                   size="sm"
+                                  disabled={simulationStatus === "idle"}
                                 >
                                   <Square className="h-3 w-3" />
                                 </Button>

@@ -72,9 +72,21 @@ export default function DashboardPage() {
   };
 
   const handlePlayPause = () => {
-    if (simulationStatus === "running") {
+    if (simulationStatus === "idle") {
+      // 如果是空闲状态，启动流并开始播放
+      toast.info("Starting data stream...");
+      startStream();
+      setSimulationStatus("running");
+    } else if (simulationStatus === "running") {
+      // 如果正在运行，暂停
       setSimulationStatus("paused");
-    } else {
+    } else if (simulationStatus === "paused") {
+      // 如果已暂停，继续播放
+      setSimulationStatus("running");
+    } else if (simulationStatus === "stopped") {
+      // 如果已停止，重新开始
+      toast.info("Restarting simulation...");
+      startStream();
       setSimulationStatus("running");
     }
   };
