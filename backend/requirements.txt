@@ -1,0 +1,12 @@
+fastapi[standard]>=0.113.0           # 现代Python Web框架
+websockets>=12.0           # WebSocket支持
+python-socketio>=5.10.0    # Socket.IO (如果需要更复杂的实时通信)
+pydantic>=2.5.0           # 数据验证和序列化
+orjson>=3.9.0             # 高性能JSON处理
+httpx>=0.26.0             # 异步HTTP客户端
+fastapi-cors>=0.0.6       # 跨域支持
+Pillow>=10.0.0            # 图像处理（生成缩略图等）
+structlog>=23.2.0         # 结构化日志
+
+# Tactics2D核心库
+tactics2d>=0.1.0          # 核心算法库

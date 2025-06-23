@@ -1,0 +1,280 @@
+# Tactics2D Web Application - Complete .gitignore
+
+# ============================================================================
+# Python & Backend (FastAPI)
+# ============================================================================
+
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+.env
+.venv.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# Poetry
+poetry.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+.idea/
+
+# ============================================================================
+# Frontend (Next.js/React/Node.js)
+# ============================================================================
+
+# Dependencies
+frontend/tactics-app/node_modules/
+frontend/tactics-app/.pnp
+frontend/tactics-app/.pnp.*
+frontend/tactics-app/.yarn/*
+!frontend/tactics-app/.yarn/patches
+!frontend/tactics-app/.yarn/plugins
+!frontend/tactics-app/.yarn/releases
+!frontend/tactics-app/.yarn/versions
+
+# Testing
+frontend/tactics-app/coverage/
+
+# Next.js
+frontend/tactics-app/.next/
+frontend/tactics-app/out/
+
+# Production build
+frontend/tactics-app/build/
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Vercel
+.vercel
+
+# TypeScript
+frontend/tactics-app/*.tsbuildinfo
+frontend/tactics-app/next-env.d.ts
+
+# ============================================================================
+# IDE & Editor
+# ============================================================================
+
+# VSCode
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains IDEs
+.idea/
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ============================================================================
+# OS Generated Files
+# ============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.tmp
+*.temp
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================================================
+# Project Specific
+# ============================================================================
+
+# Temporary test files
+temp_*
+test_temp_*
+*.temp
+*.tmp
+
+# Log files
+*.log
+logs/
+
+# Data files that shouldn't be versioned (if sensitive)
+# backend/data/private/
+# backend/uploads/
+
+# Config files with secrets (if any)
+config.local.py
+secrets.json
+
+# Database files (if using SQLite locally)
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache directories
+.cache/
+cache/
+
+# Backup files
+*.bak
+*.backup
+
+# ============================================================================
+# Keep these files
+# ============================================================================
+
+# Keep empty directories
+!.gitkeep
+
+# Keep important config files
+!package.json
+!requirements.txt
+!tsconfig.json
+!next.config.ts
+!tailwind.config.ts
