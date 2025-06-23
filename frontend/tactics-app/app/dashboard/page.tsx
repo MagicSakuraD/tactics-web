@@ -46,9 +46,12 @@ export default function DashboardPage() {
   const [participantCount, setParticipantCount] = useState(0);
 
   // WebSocket hook for simulation control
-  const { isConnected, startStream } = useWebSocket(
-    "ws://localhost:8000/ws/simulation"
-  );
+  const { isConnected, startStream, startSessionStream, parseDataset } =
+    useWebSocket("ws://localhost:8000/ws/simulation");
+
+  // 当前会话状态
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessionData, setSessionData] = useState<any>(null);
 
   useEffect(() => {
     // 检查后端状态
@@ -71,23 +74,62 @@ export default function DashboardPage() {
     }
   };
 
-  const handlePlayPause = () => {
+  const handlePlayPause = async () => {
     if (simulationStatus === "idle") {
-      // 如果是空闲状态，启动流并开始播放
-      toast.info("Starting data stream...");
-      startStream();
-      setSimulationStatus("running");
+      // 如果是空闲状态，首先解析数据集创建会话
+      if (!currentSessionId) {
+        try {
+          toast.info("正在解析数据集...");
+
+          // 解析数据集配置 - 这里使用硬编码，实际项目中应该来自表单
+          const datasetConfig = {
+            dataset: "highD",
+            file_id: 1,
+            dataset_path:
+              "/home/quinn/APP/Code/tactics2d-web/backend/data/LevelX/highD/data",
+            max_duration_ms: 5000, // 5秒数据
+          };
+
+          const session = await parseDataset(datasetConfig);
+          setCurrentSessionId(session.session_id);
+          setSessionData(session);
+          setTotalFrames(session.total_frames);
+          setParticipantCount(session.participant_count);
+
+          toast.success(
+            `数据集解析成功！共${session.participant_count}个参与者，${session.total_frames}帧数据`
+          );
+
+          // 开始会话数据流
+          startSessionStream(session.session_id, 25);
+          setSimulationStatus("running");
+        } catch (error) {
+          toast.error("数据集解析失败: " + error);
+          return;
+        }
+      } else {
+        // 如果已有会话，直接开始流
+        startSessionStream(currentSessionId, 25);
+        setSimulationStatus("running");
+      }
     } else if (simulationStatus === "running") {
       // 如果正在运行，暂停
       setSimulationStatus("paused");
     } else if (simulationStatus === "paused") {
       // 如果已暂停，继续播放
+      if (currentSessionId) {
+        startSessionStream(currentSessionId, 25);
+      }
       setSimulationStatus("running");
     } else if (simulationStatus === "stopped") {
       // 如果已停止，重新开始
-      toast.info("Restarting simulation...");
-      startStream();
-      setSimulationStatus("running");
+      if (currentSessionId) {
+        startSessionStream(currentSessionId, 25);
+        setSimulationStatus("running");
+      } else {
+        // 没有会话，回到空闲状态
+        setSimulationStatus("idle");
+      }
     }
   };
 
@@ -140,16 +182,9 @@ export default function DashboardPage() {
           </Breadcrumb>
         </header>
 
-        <div className="flex flex-1 flex-col gap-6 p-6">
+        <div className="flex flex-1 flex-col gap-3 p-3">
           {/* 可视化区域 - 现在占用更多空间 */}
           <Card className="flex-1">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Settings className="h-5 w-5" />
-                轨迹可视化
-              </CardTitle>
-              <CardDescription>Three.js轨迹可视化将在这里显示</CardDescription>
-            </CardHeader>
             <CardContent className="p-0">
               <div className="h-[700px] rounded-lg overflow-hidden">
                 <Visualization />

@@ -301,6 +301,80 @@ async def handle_simulation_message(client_id: str, message_data: dict):
                 "message": f"数据流传输失败: {str(e)}"
             }, client_id)
         
+    elif message_type == "start_session_stream":
+        # 开始会话数据流传输
+        session_id = message_data.get("session_id")
+        fps = message_data.get("fps", 25)
+        
+        if not session_id:
+            await connection_manager.send_personal_message({
+                "type": "error",
+                "message": "缺少session_id参数"
+            }, client_id)
+            return
+        
+        try:
+            # 从main.py的app.state获取会话数据
+            from ..main import app
+            
+            if not hasattr(app.state, 'sessions') or session_id not in app.state.sessions:
+                await connection_manager.send_personal_message({
+                    "type": "error",
+                    "session_id": session_id,
+                    "message": f"会话 {session_id} 不存在"
+                }, client_id)
+                return
+            
+            session = app.state.sessions[session_id]
+            trajectory_frames = session["trajectory_frames"]
+            frame_count = len(trajectory_frames)
+            
+            logger.info(f"🎬 开始流式传输会话数据: {session_id}, 共{frame_count}帧")
+            
+            await connection_manager.send_personal_message({
+                "type": "session_stream_started",
+                "session_id": session_id,
+                "total_frames": frame_count,
+                "message": f"开始传输会话数据，共{frame_count}帧"
+            }, client_id)
+            
+            # 流式传输帧数据
+            frame_interval = 1.0 / fps  # 秒
+            
+            for frame_number in range(frame_count):
+                frame_key = str(frame_number)
+                if frame_key in trajectory_frames:
+                    frame_data = trajectory_frames[frame_key]
+                    
+                    # 发送帧数据
+                    await connection_manager.send_personal_message({
+                        "type": "simulation_frame",
+                        "session_id": session_id,
+                        "data": frame_data
+                    }, client_id)
+                    
+                    # 控制帧率
+                    await asyncio.sleep(frame_interval)
+                    
+                    # 打印进度
+                    if frame_number % 25 == 0:  # 每25帧打印一次
+                        logger.info(f"📡 传输进度: {frame_number}/{frame_count}")
+            
+            # 流传输完成
+            await connection_manager.send_personal_message({
+                "type": "session_stream_completed",
+                "session_id": session_id,
+                "message": "会话数据流传输完成"
+            }, client_id)
+            
+        except Exception as e:
+            logger.error(f"会话数据流传输失败: {e}")
+            await connection_manager.send_personal_message({
+                "type": "error",
+                "session_id": session_id,
+                "message": f"数据流传输失败: {str(e)}"
+            }, client_id)
+        
     else:
         logger.warning(f"Unknown message type: {message_type}")
 

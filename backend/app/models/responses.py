@@ -126,3 +126,23 @@ class SimulationData(BaseModel):
     frame_step: int = Field(..., description="帧步长")
     timestamp_range: Tuple[int, int] = Field(..., description="时间戳范围")
     participants_info: List[ParticipantInfo] = Field(..., description="参与者信息")
+
+class DatasetParseResponse(BaseModel):
+    """数据集解析响应"""
+    session_id: str = Field(..., description="会话ID")
+    dataset: str = Field(..., description="数据集类型") 
+    file_id: int = Field(..., description="文件ID")
+    total_frames: int = Field(..., description="总帧数")
+    participant_count: int = Field(..., description="参与者数量")
+    duration_seconds: float = Field(..., description="总时长(秒)")
+    timestamp_range: Tuple[int, int] = Field(..., description="时间戳范围")
+    participants: List[ParticipantInfo] = Field(..., description="参与者列表")
+    status: StatusEnum = Field(..., description="解析状态")
+    message: str = Field("", description="状态消息")
+
+class TrajectoryFrame(BaseModel):
+    """单帧轨迹数据"""
+    frame_number: int = Field(..., description="帧号")
+    timestamp: int = Field(..., description="时间戳(毫秒)")
+    vehicles: List[Dict[str, Any]] = Field(..., description="车辆数据")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")

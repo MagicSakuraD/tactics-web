@@ -74,6 +74,8 @@ interface UseWebSocketReturn {
   requestFrame: (frame: number, sessionId?: string) => void;
   requestMapHttp: () => Promise<void>; // HTTP地图请求
   startStream: (sessionId?: string, fps?: number) => void;
+  startSessionStream: (sessionId: string, fps?: number) => void; // 新增：会话数据流
+  parseDataset: (config: any) => Promise<any>; // 新增：数据集解析
 }
 
 export const useWebSocket = (
@@ -225,6 +227,49 @@ export const useWebSocket = (
     [sendMessage]
   );
 
+  // 开始会话数据流
+  const startSessionStream = useCallback(
+    (sessionId: string, fps: number = 25) => {
+      console.log(`🎬 开始会话数据流: ${sessionId}, FPS: ${fps}`);
+      sendMessage({
+        type: "start_session_stream",
+        session_id: sessionId,
+        fps: fps,
+      });
+    },
+    [sendMessage]
+  );
+
+  // 解析数据集并创建会话
+  const parseDataset = useCallback(async (datasetConfig: {
+    dataset: string;
+    file_id: number;
+    dataset_path: string;
+    max_duration_ms?: number;
+  }) => {
+    try {
+      console.log("📊 解析数据集...", datasetConfig);
+      const response = await fetch("http://localhost:8000/api/dataset/parse", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(datasetConfig),
+      });
+
+      if (!response.ok) {
+        throw new Error(`解析失败: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log("✅ 数据集解析成功:", result);
+      return result;
+    } catch (error) {
+      console.error("❌ 数据集解析失败:", error);
+      throw error;
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       disconnect();
@@ -242,5 +287,7 @@ export const useWebSocket = (
     requestFrame,
     requestMapHttp,
     startStream,
+    startSessionStream,
+    parseDataset,
   };
 };

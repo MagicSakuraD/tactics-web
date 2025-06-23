@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Uplo
 from fastapi.responses import JSONResponse
 import os
 import shutil
+import time
+import logging
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Optional
@@ -14,6 +16,9 @@ from app.config import settings
 # 导入地图相关的工具
 from app.utils.tactics2d_wrapper import tactics2d_wrapper
 from app.utils.simple_formatter import data_formatter
+
+# 设置日志
+logger = logging.getLogger(__name__)
 
 # 🚀 应用入口点
 # 导入tactics2d
@@ -62,6 +67,7 @@ class DatasetInitRequest(BaseModel):
     stamp_end: Optional[int] = None  # 结束时间戳
     perception_range: int = 50  # 感知范围
     frame_step: int = 40  # 帧步长
+    max_duration_ms: Optional[int] = None  # 最大持续时间（毫秒）
 
 # 数据集初始化响应模型
 class DatasetInitResponse(BaseModel):
@@ -664,95 +670,96 @@ async def initialize_simulation(request: DatasetInitRequest):
             error="initialization_error"
         )
 
-@app.get("/api/simulation/status")
-async def get_simulation_status():
-    """获取仿真状态 - 用于dashboard检查后端连接和数据状态"""
+@app.post("/api/dataset/parse")
+async def parse_dataset(request: DatasetInitRequest):
+    """解析数据集并创建仿真会话"""
     try:
-        # 检查是否有地图数据
-        has_map = current_map["file_path"] is not None
-        map_parsed = current_map["parsed_data"] is not None
+        logger.info(f"🚀 开始解析数据集: {request.dataset}, 文件ID: {request.file_id}")
         
-        # 模拟一些统计数据
-        participant_count = 0
-        total_frames = 0
+        # 验证数据集路径
+        if not Path(request.dataset_path).exists():
+            raise HTTPException(
+                status_code=404, 
+                detail=f"数据集路径不存在: {request.dataset_path}"
+            )
         
-        # 如果有解析过的数据，尝试获取真实统计
-        if map_parsed and current_map["parsed_data"]:
-            roads = current_map["parsed_data"].get("roads", [])
-            lanes = current_map["parsed_data"].get("lanes", [])
-            participant_count = len(roads) + len(lanes)  # 简单估算
-            total_frames = 1000  # 模拟帧数
+        # 验证Tactics2D可用性
+        if not tactics2d_wrapper.is_available():
+            raise HTTPException(
+                status_code=500,
+                detail="Tactics2D库不可用，无法解析数据集"
+            )
         
-        return {
-            "success": True,
-            "status": "ready" if has_map else "waiting_for_config",
-            "has_map": has_map,
-            "map_parsed": map_parsed,
-            "participant_count": participant_count,
-            "total_frames": total_frames,
-            "current_frame": 0,
-            "map_file": current_map["file_path"],
-            "tactics2d_available": tactics2d_wrapper.is_available(),
-            "timestamp": current_map["uploaded_at"]
+        # 设置解析参数
+        max_duration_ms = getattr(request, 'max_duration_ms', 5000)  # 默认5秒
+        
+        # 解析数据集
+        session_data = tactics2d_wrapper.parse_dataset_for_session(
+            dataset=request.dataset,
+            file_id=request.file_id,
+            data_folder=request.dataset_path,
+            max_duration_ms=max_duration_ms
+        )
+        
+        # 生成会话ID
+        session_id = f"session_{request.dataset}_{request.file_id}_{int(time.time())}"
+        
+        # 构建响应数据
+        response_data = {
+            "session_id": session_id,
+            "dataset": request.dataset,
+            "file_id": request.file_id,
+            "total_frames": session_data["session_data"]["total_frames"],
+            "participant_count": session_data["session_data"]["participant_count"],
+            "duration_seconds": session_data["session_data"]["duration_seconds"],
+            "timestamp_range": session_data["session_data"]["timestamp_range"],
+            "participants": session_data["session_data"]["participants"],
+            "status": "success",
+            "message": f"成功解析数据集，共{session_data['session_data']['participant_count']}个参与者"
         }
+        
+        # 将轨迹数据存储到全局状态（实际项目中应该用数据库或缓存）
+        # 这里简化存储到全局变量
+        if not hasattr(app.state, 'sessions'):
+            app.state.sessions = {}
+        
+        app.state.sessions[session_id] = {
+            "session_data": session_data["session_data"],
+            "trajectory_frames": session_data["trajectory_frames"],
+            "created_at": time.time()
+        }
+        
+        logger.info(f"✅ 数据集解析完成，会话ID: {session_id}")
+        return response_data
         
     except Exception as e:
-        print(f"❌ [STATUS] 获取仿真状态失败: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "status": "error"
-        }
+        logger.error(f"❌ 数据集解析失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/test-osm-parse/{map_file}")
-async def test_osm_parse(map_file: str):
-    """测试OSM地图解析功能"""
-    try:
-        # 构建地图文件路径
-        map_path = Path(__file__).parent.parent / "data" / "highD_map" / f"{map_file}.osm"
-        
-        if not map_path.exists():
-            return {
-                "success": False,
-                "error": f"地图文件不存在: {map_path}",
-                "available_maps": [f.stem for f in (Path(__file__).parent.parent / "data" / "highD_map").glob("*.osm")]
-            }
-        
-        print(f"🧪 [TEST] 开始测试OSM解析: {map_path}")
-        
-        # 测试OSM解析
-        map_info = tactics2d_wrapper.parse_osm_map_simple(str(map_path))
-        
-        # 格式化为前端数据
-        formatted_data = data_formatter.format_map_data(map_info)
-        
-        return {
-            "success": True,
-            "map_file": map_file,
-            "file_path": str(map_path),
-            "raw_data_stats": {
-                "roads": len(map_info.get("roads", [])),
-                "lanes": len(map_info.get("lanes", [])),
-                "boundaries": len(map_info.get("boundaries", [])),
-                "areas": len(map_info.get("areas", []))
-            },
-            "formatted_data_stats": {
-                "roads": len(formatted_data.get("roads", [])),
-                "lanes": len(formatted_data.get("lanes", [])),
-                "boundaries": len(formatted_data.get("boundaries", []))
-            },
-            "sample_data": {
-                "first_road": formatted_data.get("roads", [{}])[0] if formatted_data.get("roads") else None,
-                "first_lane": formatted_data.get("lanes", [{}])[0] if formatted_data.get("lanes") else None,
-                "boundary_sample": map_info.get("boundary", {})
-            }
-        }
-        
-    except Exception as e:
-        print(f"❌ [TEST] OSM解析测试失败: {e}")
-        import traceback
-        return {
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
+@app.get("/api/session/{session_id}")
+async def get_session_info(session_id: str):
+    """获取会话信息"""
+    if not hasattr(app.state, 'sessions') or session_id not in app.state.sessions:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    
+    session = app.state.sessions[session_id]
+    return {
+        "session_id": session_id,
+        "session_data": session["session_data"],
+        "created_at": session["created_at"],
+        "frame_count": len(session["trajectory_frames"])
+    }
+
+@app.get("/api/session/{session_id}/frame/{frame_number}")
+async def get_session_frame(session_id: str, frame_number: int):
+    """获取会话的指定帧数据"""
+    if not hasattr(app.state, 'sessions') or session_id not in app.state.sessions:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    
+    session = app.state.sessions[session_id]
+    frame_key = str(frame_number)
+    
+    if frame_key not in session["trajectory_frames"]:
+        raise HTTPException(status_code=404, detail=f"帧 {frame_number} 不存在")
+    
+    return session["trajectory_frames"][frame_key]

@@ -25,6 +25,13 @@ class TrajectoryParseRequest(BaseModel):
     stamp_range: Optional[Tuple[int, int]] = Field(None, description="时间戳范围(毫秒)")
     participant_ids: Optional[List[int]] = Field(None, description="指定的参与者ID列表")
 
+class DatasetInitRequest(BaseModel):
+    """数据集初始化请求"""
+    dataset: DatasetType = Field(..., description="数据集类型")
+    file_id: int = Field(..., ge=1, description="文件ID")
+    dataset_path: str = Field(..., description="数据集文件路径")
+    max_duration_ms: Optional[int] = Field(3000, description="最大解析时长(毫秒)")
+
 class SimulationControlRequest(BaseModel):
     """仿真控制请求"""
     action: str = Field(..., description="控制动作: start, pause, stop, reset")

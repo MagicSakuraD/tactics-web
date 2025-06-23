@@ -1,7 +1,6 @@
 # 🛠️ 通用辅助函数
 import time
 import uuid
-import psutil
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 import logging
@@ -40,24 +39,15 @@ def format_file_size(bytes_size: int) -> str:
 def get_system_stats() -> Dict[str, Any]:
     """获取系统统计信息"""
     try:
-        process = psutil.Process()
-        memory_info = process.memory_info()
-        
+        import os
         return {
-            "cpu_percent": psutil.cpu_percent(interval=1),
-            "memory_usage": {
-                "rss": memory_info.rss,
-                "vms": memory_info.vms,
-                "rss_mb": round(memory_info.rss / 1024 / 1024, 2),
-                "vms_mb": round(memory_info.vms / 1024 / 1024, 2)
-            },
-            "process_id": process.pid,
-            "process_status": process.status(),
-            "create_time": datetime.fromtimestamp(process.create_time()).isoformat()
+            "process_id": os.getpid(),
+            "timestamp": datetime.now().isoformat(),
+            "available": True
         }
     except Exception as e:
         logger.warning(f"获取系统统计信息失败: {e}")
-        return {}
+        return {"available": False}
 
 def safe_divide(a: float, b: float, default: float = 0.0) -> float:
     """安全除法，避免除零错误"""

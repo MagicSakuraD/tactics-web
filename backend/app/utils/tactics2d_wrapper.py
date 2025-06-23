@@ -634,5 +634,143 @@ class Tactics2DWrapper:
             logger.error(f"详细错误信息: {traceback.format_exc()}")
             raise
 
+    def parse_dataset_for_session(self, 
+                                dataset: str, 
+                                file_id: int, 
+                                data_folder: str,
+                                max_duration_ms: Optional[int] = None,
+                                stamp_range: Optional[Tuple[int, int]] = None) -> Dict[str, Any]:
+        """为会话解析数据集，返回完整的轨迹数据和元数据"""
+        if not self.is_available():
+            raise Exception("Tactics2D库不可用")
+        
+        try:
+            parser = self.get_parser(dataset)
+            
+            # 获取文件基本信息
+            file_info = self.get_file_basic_info(dataset, file_id, data_folder)
+            
+            # 确定解析范围
+            if stamp_range is None:
+                full_range = parser.get_stamp_range(file_id, data_folder)
+                start_time = int(full_range[0])
+                end_time = int(full_range[1])
+                
+                if max_duration_ms:
+                    end_time = min(end_time, start_time + max_duration_ms)
+            else:
+                start_time, end_time = stamp_range
+            
+            logger.info(f"解析数据集 {dataset} 文件 {file_id}, 时间范围: {start_time} - {end_time}")
+            
+            # 解析轨迹数据
+            participants, actual_range = parser.parse_trajectory(
+                file_id, 
+                data_folder, 
+                stamp_range=(start_time, end_time)
+            )
+            
+            # 提取参与者信息
+            participant_list = []
+            for pid, participant in participants.items():
+                participant_info = {
+                    "id": self.safe_convert_numpy(pid),
+                    "type": getattr(participant, 'driven_mode', 'Vehicle'),
+                    "active_time_range": [
+                        self.safe_convert_numpy(participant.initial_time_stamp_ms),
+                        self.safe_convert_numpy(participant.final_time_stamp_ms)
+                    ],
+                    "attributes": self._extract_safe_attributes(participant)
+                }
+                participant_list.append(participant_info)
+            
+            # 生成时序帧数据
+            trajectory_frames = self._generate_trajectory_frames(
+                participants, start_time, end_time
+            )
+            
+            return {
+                "session_data": {
+                    "dataset": dataset,
+                    "file_id": file_id,
+                    "total_frames": len(trajectory_frames),
+                    "participant_count": len(participants),
+                    "duration_seconds": (end_time - start_time) / 1000.0,
+                    "timestamp_range": [start_time, end_time],
+                    "participants": participant_list
+                },
+                "trajectory_frames": trajectory_frames,
+                "file_info": file_info
+            }
+            
+        except Exception as e:
+            logger.error(f"数据集解析失败: {e}")
+            raise
+    
+    def _generate_trajectory_frames(self, participants: Dict, start_time: int, end_time: int, fps: int = 25) -> Dict[str, Dict]:
+        """生成轨迹帧数据"""
+        frames = {}
+        frame_interval = 1000 // fps  # 毫秒间隔
+        
+        frame_number = 0
+        for timestamp in range(start_time, end_time, frame_interval):
+            frame_data = {
+                "frame_number": frame_number,
+                "timestamp": timestamp,
+                "vehicles": []
+            }
+            
+            for pid, participant in participants.items():
+                if participant.is_active(timestamp):
+                    # 获取该时间戳的状态
+                    position = participant.get_position(timestamp)
+                    velocity = participant.get_velocity(timestamp) if hasattr(participant, 'get_velocity') else [0, 0]
+                    heading = participant.get_heading(timestamp) if hasattr(participant, 'get_heading') else 0
+                    dimensions = getattr(participant, 'dimensions', [4.5, 2.0, 1.8])  # 默认车辆尺寸
+                    
+                    vehicle_data = {
+                        "id": self.safe_convert_numpy(pid),
+                        "position": {
+                            "x": self.safe_convert_numpy(position[0]),
+                            "y": 0,  # Three.js的y轴是高度
+                            "z": self.safe_convert_numpy(position[1])
+                        },
+                        "rotation": {
+                            "x": 0,
+                            "y": self.safe_convert_numpy(heading),
+                            "z": 0
+                        },
+                        "velocity": {
+                            "x": self.safe_convert_numpy(velocity[0]) if len(velocity) > 0 else 0,
+                            "y": 0,
+                            "z": self.safe_convert_numpy(velocity[1]) if len(velocity) > 1 else 0
+                        },
+                        "dimensions": {
+                            "x": self.safe_convert_numpy(dimensions[1]) if len(dimensions) > 1 else 2.0,  # 宽度
+                            "y": self.safe_convert_numpy(dimensions[2]) if len(dimensions) > 2 else 1.8,  # 高度
+                            "z": self.safe_convert_numpy(dimensions[0]) if len(dimensions) > 0 else 4.5   # 长度
+                        },
+                        "color": self._get_vehicle_color(getattr(participant, 'driven_mode', 'car')),
+                        "type": getattr(participant, 'driven_mode', 'car')
+                    }
+                    frame_data["vehicles"].append(vehicle_data)
+            
+            frames[str(frame_number)] = frame_data
+            frame_number += 1
+        
+        return frames
+    
+    def _get_vehicle_color(self, vehicle_type: str) -> str:
+        """根据车辆类型返回颜色"""
+        color_map = {
+            'car': '#3b82f6',      # 蓝色
+            'truck': '#ef4444',    # 红色  
+            'bus': '#22c55e',      # 绿色
+            'motorcycle': '#f59e0b', # 橙色
+            'default': '#6b7280'   # 灰色
+        }
+        return color_map.get(vehicle_type.lower(), color_map['default'])
+
+
 # 全局包装器实例
 tactics2d_wrapper = Tactics2DWrapper()
