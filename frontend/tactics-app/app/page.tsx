@@ -122,11 +122,19 @@ export default function DatasetConfigPage() {
       }
 
       const result = await response.json();
-      setStatusMessage("✅ 数据处理已开始！正在跳转到控制台...");
 
-      // 等待一下让用户看到成功消息，然后跳转到dashboard
+      // 检查是否成功获取到session_id
+      if (!result.session_id) {
+        throw new Error("后端没有返回session_id");
+      }
+
+      setStatusMessage(
+        `✅ 会话创建成功！会话ID: ${result.session_id} 正在跳转到控制台...`
+      );
+
+      // 等待一下让用户看到成功消息，然后跳转到dashboard并传递session_id
       setTimeout(() => {
-        router.push("/dashboard");
+        router.push(`/dashboard?session_id=${result.session_id}`);
       }, 1500);
     } catch (error) {
       console.error("Error submitting form:", error);

@@ -69,6 +69,7 @@ class DatasetConfig(BaseModel):
     stamp_end: Optional[int] = Field(None, description="结束时间戳")
     perception_range: float = Field(50.0, description="感知范围")
     frame_step: int = Field(40, description="帧步长")
+    max_duration_ms: Optional[int] = Field(None, description="最大持续时间（毫秒）")
 
 class WebSocketCommand(BaseModel):
     """WebSocket命令"""

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
+
 import { toast } from "sonner";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -18,23 +20,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import {
-  Car,
-  Play,
-  Pause,
-  Square,
-  BarChart3,
-  Settings,
-  MapPin,
-} from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import Visualization from "./components/visualization";
 
 export default function DashboardPage() {
@@ -44,104 +30,112 @@ export default function DashboardPage() {
   const [currentFrame, setCurrentFrame] = useState(0);
   const [totalFrames, setTotalFrames] = useState(0);
   const [participantCount, setParticipantCount] = useState(0);
+  const [mapData, setMapData] = useState(null);
 
-  // WebSocket hook for simulation control
-  const { isConnected, startStream, startSessionStream, parseDataset } =
-    useWebSocket("ws://localhost:8000/ws/simulation");
+  // 从URL查询参数中获取会话信息
+  const searchParams = useSearchParams();
+  const sessionId = searchParams.get("session_id");
 
-  // 当前会话状态
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [sessionData, setSessionData] = useState<any>(null);
+  // 使用简化后的WebSocket hook
+  const { isConnected, frameData, startSessionStream } = useWebSocket(
+    "ws://localhost:8000/ws/simulation"
+  );
 
+  // 效果1: 通过 HTTP API 获取会话数据（包括地图数据和会话信息）
   useEffect(() => {
-    // 检查后端状态
-    checkSimulationStatus();
-  }, []);
-
-  const checkSimulationStatus = async () => {
-    try {
-      const response = await fetch(
-        "http://localhost:8000/api/simulation/status"
-      );
-      if (response.ok) {
-        const data = await response.json();
-        toast.success("后端连接正常，数据已准备就绪");
-        setParticipantCount(data.participant_count || 0);
-        setTotalFrames(data.total_frames || 0);
-      }
-    } catch (error) {
-      toast.error("后端连接失败，请检查FastAPI服务是否启动");
+    if (!sessionId) {
+      toast.error("❌ 缺少会话ID，请返回主页重新配置");
+      return;
     }
-  };
 
-  const handlePlayPause = async () => {
-    if (simulationStatus === "idle") {
-      // 如果是空闲状态，首先解析数据集创建会话
-      if (!currentSessionId) {
-        try {
-          toast.info("正在解析数据集...");
+    // 发送 HTTP GET 请求获取会话数据
+    const fetchSessionData = async () => {
+      try {
+        toast.info("🔄 正在获取会话数据...");
 
-          // 解析数据集配置 - 这里使用硬编码，实际项目中应该来自表单
-          const datasetConfig = {
-            dataset: "highD",
-            file_id: 1,
-            dataset_path:
-              "/home/quinn/APP/Code/tactics2d-web/backend/data/LevelX/highD/data",
-            max_duration_ms: 5000, // 5秒数据
-          };
+        const response = await fetch(
+          `http://localhost:8000/api/simulation/session/${sessionId}`
+        );
 
-          const session = await parseDataset(datasetConfig);
-          setCurrentSessionId(session.session_id);
-          setSessionData(session);
-          setTotalFrames(session.total_frames);
-          setParticipantCount(session.participant_count);
-
-          toast.success(
-            `数据集解析成功！共${session.participant_count}个参与者，${session.total_frames}帧数据`
-          );
-
-          // 开始会话数据流
-          startSessionStream(session.session_id, 25);
-          setSimulationStatus("running");
-        } catch (error) {
-          toast.error("数据集解析失败: " + error);
-          return;
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-      } else {
-        // 如果已有会话，直接开始流
-        startSessionStream(currentSessionId, 25);
-        setSimulationStatus("running");
+
+        const sessionData = await response.json();
+
+        // 设置地图数据
+        if (sessionData.map_data) {
+          setMapData(sessionData.map_data);
+          toast.success("🗺️ 地图数据加载成功");
+        }
+
+        // 设置轨迹元数据
+        if (sessionData.trajectory_metadata) {
+          setTotalFrames(sessionData.trajectory_metadata.total_frames || 0);
+          toast.success(
+            `� 轨迹元数据加载成功 (${sessionData.trajectory_metadata.total_frames} 帧)`
+          );
+        }
+
+        console.log("会话数据加载完成:", sessionData);
+      } catch (error) {
+        console.error("获取会话数据失败:", error);
+        const errorMessage =
+          error instanceof Error ? error.message : "未知错误";
+        toast.error(`❌ 获取会话数据失败: ${errorMessage}`);
+
+        // 回退到 localStorage（作为后备方案）
+        const storedMapData = localStorage.getItem(`map_data_${sessionId}`);
+        if (storedMapData) {
+          try {
+            const parsedMapData = JSON.parse(storedMapData);
+            setMapData(parsedMapData);
+            toast.warning("🗺️ 使用缓存的地图数据");
+          } catch (parseError) {
+            console.error("解析缓存数据失败:", parseError);
+            toast.error("❌ 缓存数据也已损坏，请重新配置");
+          }
+        }
       }
+    };
+
+    fetchSessionData();
+  }, [sessionId]);
+
+  // 效果2: 监听WebSocket帧数据更新
+  useEffect(() => {
+    if (frameData) {
+      setCurrentFrame(frameData.frame_number || 0);
+      setParticipantCount(frameData.vehicles?.length || 0);
+    }
+  }, [frameData]);
+
+  const handlePlayPause = () => {
+    if (!sessionId) {
+      toast.error("错误：缺少会话ID，无法开始播放");
+      return;
+    }
+
+    if (simulationStatus === "idle" || simulationStatus === "stopped") {
+      toast.info("▶️ 开始播放...");
+      startSessionStream(sessionId, 25); // 以25 FPS开始流
+      setSimulationStatus("running");
     } else if (simulationStatus === "running") {
-      // 如果正在运行，暂停
+      // 注意：当前的WebSocket实现不支持暂停/继续
+      // 这里只是一个UI状态切换的例子
+      toast("⏸️ 暂停（前端UI状态，流仍在继续）");
       setSimulationStatus("paused");
     } else if (simulationStatus === "paused") {
-      // 如果已暂停，继续播放
-      if (currentSessionId) {
-        startSessionStream(currentSessionId, 25);
-      }
+      toast.info("▶️ 恢复（前端UI状态）");
       setSimulationStatus("running");
-    } else if (simulationStatus === "stopped") {
-      // 如果已停止，重新开始
-      if (currentSessionId) {
-        startSessionStream(currentSessionId, 25);
-        setSimulationStatus("running");
-      } else {
-        // 没有会话，回到空闲状态
-        setSimulationStatus("idle");
-      }
     }
   };
 
   const handleStop = () => {
+    toast.error("⏹️ 停止播放");
     setSimulationStatus("stopped");
+    // 注意：这不会停止后端的流，只是重置前端状态
     setCurrentFrame(0);
-  };
-
-  const handleStartStream = () => {
-    toast.info("Starting data stream...");
-    startStream();
-    setSimulationStatus("running");
   };
 
   return (
@@ -155,12 +149,20 @@ export default function DashboardPage() {
       <AppSidebar
         simulationStatus={simulationStatus}
         currentFrame={currentFrame}
-        totalFrames={totalFrames}
+        totalFrames={totalFrames} // totalFrames可以从session_stream_started消息中获取
         participantCount={participantCount}
         onPlayPause={handlePlayPause}
         onStop={handleStop}
         isConnected={isConnected}
-        onStartStream={handleStartStream}
+        onStartStream={() => {
+          if (sessionId) {
+            toast.info("▶️ 开始播放...");
+            startSessionStream(sessionId, 25);
+            setSimulationStatus("running");
+          } else {
+            toast.error("错误：缺少会话ID，无法开始播放");
+          }
+        }}
       />
       <SidebarInset>
         <header className="bg-background sticky top-0 flex shrink-0 items-center gap-2 border-b p-4">
@@ -183,11 +185,16 @@ export default function DashboardPage() {
         </header>
 
         <div className="flex flex-1 flex-col gap-3 p-3">
-          {/* 可视化区域 - 现在占用更多空间 */}
           <Card className="flex-1">
             <CardContent className="p-0">
               <div className="h-[700px] rounded-lg overflow-hidden">
-                <Visualization />
+                {mapData ? (
+                  <Visualization mapData={mapData} frameData={frameData} />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-muted">
+                    <p className="text-muted-foreground">正在加载地图数据...</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

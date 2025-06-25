@@ -127,6 +127,15 @@ class SimulationData(BaseModel):
     timestamp_range: Tuple[int, int] = Field(..., description="时间戳范围")
     participants_info: List[ParticipantInfo] = Field(..., description="参与者信息")
 
+class SimulationInitResponse(BaseModel):
+    """响应：仿真初始化"""
+    success: bool = Field(..., description="操作是否成功")
+    message: str = Field(..., description="用户友好的消息")
+    session_id: Optional[str] = Field(None, description="成功时创建的会话ID")
+    map_data: Optional[MapData] = Field(None, description="成功时返回的地图数据")
+    config: Optional[Dict[str, Any]] = Field(None, description="用于初始化的配置")
+    error: Optional[str] = Field(None, description="失败时的错误详情")
+
 class DatasetParseResponse(BaseModel):
     """数据集解析响应"""
     session_id: str = Field(..., description="会话ID")
@@ -146,3 +155,15 @@ class TrajectoryFrame(BaseModel):
     timestamp: int = Field(..., description="时间戳(毫秒)")
     vehicles: List[Dict[str, Any]] = Field(..., description="车辆数据")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
+
+class SessionInfoResponse(BaseModel):
+    """会话信息响应"""
+    success: bool = Field(..., description="操作是否成功")
+    session_id: str = Field(..., description="会话ID")
+    map_data: MapData = Field(..., description="地图数据")
+    total_frames: int = Field(..., description="总帧数")
+    frame_step: int = Field(..., description="帧步长")
+    config: Dict[str, Any] = Field(..., description="仿真配置")
+    created_at: float = Field(..., description="创建时间戳")
+    participant_count: int = Field(0, description="参与者数量")
+    message: str = Field("Session info retrieved successfully", description="状态消息")

@@ -1,42 +1,42 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Line } from "@react-three/drei";
 import * as THREE from "three";
-import { useWebSocket } from "@/hooks/useWebSocket";
-import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
-import { map } from "zod";
 
-// 定义车辆数据类型
+// 定义车辆数据类型（基于后端实际数据格式）
 interface VehicleData {
   id: number;
-  position: { x: number; y: number; z: number };
-  rotation: { x: number; y: number; z: number };
-  velocity: { x: number; y: number; z: number };
-  dimensions: { x: number; y: number; z: number };
-  color: string;
-  type: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  heading: number;
 }
 
 // 单个车辆的组件
 const Vehicle = ({ data }: { data: VehicleData }) => {
   const ref = useRef<THREE.Mesh>(null!);
 
-  // 直接使用来自后端的数据更新位置和旋转
-  // Three.js/React Three Fiber 会处理渲染优化
+  // 从后端的平面数据格式转换为Three.js所需的3D格式
+  // 使用默认的车辆尺寸
+  const position: [number, number, number] = [data.x || 0, data.y || 0, 0.5];
+  const rotation: [number, number, number] = [0, 0, data.heading || 0];
+  const dimensions: [number, number, number] = [4.5, 2.0, 1.8]; // 长x宽x高（米）
+  
+  // 根据速度计算颜色
+  const speed = Math.sqrt((data.vx || 0) ** 2 + (data.vy || 0) ** 2);
+  const color = speed > 15 ? "#ff4444" : speed > 8 ? "#ffaa44" : "#44aa44";
+
   return (
     <mesh
       ref={ref}
-      position={[data.position.x, data.position.y, data.position.z]}
-      // 假设后端提供了四元数或欧拉角用于旋转
-      // rotation={[data.rotation.x, data.rotation.y, data.rotation.z]}
+      position={position}
+      rotation={rotation}
     >
-      <boxGeometry
-        args={[data.dimensions.y, data.dimensions.x, data.dimensions.z]}
-      />
-      <meshStandardMaterial color={data.color} />
+      <boxGeometry args={dimensions} />
+      <meshStandardMaterial color={color} />
     </mesh>
   );
 };
@@ -108,60 +108,15 @@ const Map = ({ mapData }: { mapData: MapDataType | null }) => {
 };
 
 // 主可视化组件
-const Visualization = () => {
-  const {
-    connect,
-    disconnect,
-    isConnected,
-    frameData,
-    mapData,
-    requestMapHttp, // HTTP地图请求
-    startStream,
-  } = useWebSocket("ws://localhost:8000/ws/simulation");
-
-  console.log(mapData, "mapData");
-
-  useEffect(() => {
-    // 组件加载时连接WebSocket，卸载时断开
-    connect();
-    toast.info("WebSocket connecting...");
-
-    return () => {
-      disconnect();
-      toast.info("WebSocket disconnected.");
-    };
-  }, [connect, disconnect]);
-
-  useEffect(() => {
-    if (isConnected) {
-      toast.success("WebSocket connected successfully.");
-    }
-  }, [isConnected]);
-
-  // 自动加载地图数据
-  useEffect(() => {
-    const loadMapData = async () => {
-      toast.info("Auto-loading map data...");
-      await requestMapHttp();
-    };
-
-    loadMapData();
-  }, []); // 只在组件挂载时执行一次
-
-  const handleRequestMapHttp = async () => {
-    toast.info("Requesting map data via HTTP...");
-    await requestMapHttp();
-  };
-
-  const handleStartStream = () => {
-    toast.info("Starting data stream...");
-    startStream();
-  };
-
+const Visualization = ({
+  mapData,
+  frameData,
+}: {
+  mapData: any;
+  frameData: any;
+}) => {
   return (
     <div className="relative w-full h-full">
-      {/* 移除了控制按钮和相机控制，使用默认鸟瞰视角 */}
-
       <Canvas
         camera={{ position: [0, 100, 150], fov: 50 }}
         style={{ width: "100%", height: "100%", background: "#1a1a1a" }}
@@ -174,12 +129,13 @@ const Visualization = () => {
           screenSpacePanning={false}
           maxPolarAngle={Math.PI / 2}
         />
-        <gridHelper args={[500, 100, "#444", "#888"]} />
+        <gridHelper args={[100, 20, "#444", "#888"]} />
 
         <Map mapData={mapData} />
 
         {frameData &&
-          frameData.vehicles.map((vehicle) => (
+          frameData.vehicles &&
+          frameData.vehicles.map((vehicle: VehicleData) => (
             <Vehicle key={vehicle.id} data={vehicle} />
           ))}
       </Canvas>

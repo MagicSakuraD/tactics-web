@@ -33,7 +33,7 @@ def test_osm_parser_methods():
 
 def test_different_parse_methods():
     """测试不同的 parse 方法调用方式"""
-    osm_path = "./app/data/highD_map/highD_2.osm"
+    osm_path = "/home/quinn/APP/Code/tactics2d-web/backend/data/highD_map/highD_2.osm"
     
     print(f"\n🧪 测试文件: {osm_path}")
     
@@ -101,7 +101,7 @@ def test_different_parse_methods():
 
 def analyze_osm_file():
     """分析 OSM 文件内容，看是否有格式问题"""
-    osm_path = "./app/data/highD_map/highD_2.osm"
+    osm_path = "/home/quinn/APP/Code/tactics2d-web/backend/data/highD_map/highD_2.osm"
     
     print(f"\n📄 分析 OSM 文件: {osm_path}")
     
@@ -134,6 +134,48 @@ def analyze_osm_file():
         print(f"❌ 文件分析失败: {e}")
         return False
 
+def test_xml_root_parsing():
+    """测试正确的XML解析方式 - 传递XML根元素"""
+    import xml.etree.ElementTree as ET
+    osm_path = "/home/quinn/APP/Code/tactics2d-web/backend/data/highD_map/highD_2.osm"
+    
+    print("\n🧪 测试XML解析方式: 传递XML根元素")
+    
+    try:
+        # 先解析XML文件
+        tree = ET.parse(osm_path)
+        xml_root = tree.getroot()
+        
+        # 然后传递根元素到parser.parse
+        parser = OSMParser()
+        project_rule = {}
+        gps_origin = (0.0, 0.0)
+        configs = {}
+        
+        print("🔍 XML根元素类型:", type(xml_root))
+        print("🔍 XML根元素标签:", xml_root.tag)
+        
+        map_obj = parser.parse(xml_root, project_rule, gps_origin, configs)
+        print("✅ 成功!")
+        
+        # 检查解析结果
+        print(f"解析结果类型: {type(map_obj)}")
+        
+        if hasattr(map_obj, 'nodes'):
+            print(f"节点数: {len(map_obj.nodes)}")
+        if hasattr(map_obj, 'roadlines'):
+            print(f"道路线数: {len(map_obj.roadlines)}")
+        if hasattr(map_obj, 'relations'):
+            print(f"关系数: {len(map_obj.relations)}")
+        
+        return map_obj
+    
+    except Exception as e:
+        print(f"❌ 失败: {e}")
+        print(f"错误类型: {type(e).__name__}")
+        traceback.print_exc()
+        return None
+
 if __name__ == "__main__":
     print("🚀 开始调试 OSMParser API 使用")
     print("=" * 60)
@@ -144,8 +186,11 @@ if __name__ == "__main__":
     # 2. 分析OSM文件
     analyze_osm_file()
     
-    # 3. 测试不同的调用方式
-    result = test_different_parse_methods()
+    # 3. 测试不同的调用方式（传递文件路径 - 旧方式，预期会失败）
+    # result = test_different_parse_methods()
+    
+    # 4. 测试正确的调用方式（传递XML根元素）
+    result = test_xml_root_parsing()
     
     if result:
         print("\n🎉 找到了可工作的方法!")
