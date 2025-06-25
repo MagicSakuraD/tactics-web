@@ -69,7 +69,7 @@ class MapService:
         """
         从官方OSMParser对象提取标准化地图数据
         """
-        COORDINATE_SCALE = 1000
+        COORDINATE_SCALE = 100000  # 增大缩放比例以匹配车辆坐标范围
         lanes = []
         boundaries = []
         roads = []
@@ -92,7 +92,7 @@ class MapService:
                         coords = self._calculate_centerline_from_boundaries(left_way, right_way)
                         
                         if coords and len(coords) >= 2:
-                            threejs_coords = [[float(x)*COORDINATE_SCALE, 0.0, float(-y)*COORDINATE_SCALE] for x, y in coords]
+                            threejs_coords = [[float(x)*COORDINATE_SCALE, 0.0, float(y)*COORDINATE_SCALE] for x, y in coords]
                             lane_data = {
                                 'id': f"lane_{rel_id}",
                                 'coordinates': threejs_coords,
@@ -110,7 +110,7 @@ class MapService:
                     if hasattr(line.geometry, 'coords'):
                         coords = list(line.geometry.coords)
                 if coords and len(coords) >= 2:
-                    threejs_coords = [[float(x)*COORDINATE_SCALE, 0.0, float(-y)*COORDINATE_SCALE] for x, y in coords]
+                    threejs_coords = [[float(x)*COORDINATE_SCALE, 0.0, float(y)*COORDINATE_SCALE] for x, y in coords]
                     type_value = getattr(line, 'type_', 'unknown')
                     line_type = type_value.lower() if type_value is not None else 'unknown'
                     subtype_value = getattr(line, 'subtype', 'unknown')
@@ -157,7 +157,7 @@ class MapService:
                     if hasattr(boundary.geometry, 'coords'):
                         coords = list(boundary.geometry.coords)
                 if coords and len(coords) >= 2:
-                    threejs_coords = [[float(x)*COORDINATE_SCALE, 0.0, float(-y)*COORDINATE_SCALE] for x, y in coords]
+                    threejs_coords = [[float(x)*COORDINATE_SCALE, 0.0, float(y)*COORDINATE_SCALE] for x, y in coords]
                     boundary_data = {
                         'id': f"boundary_{bound_id}",
                         'coordinates': threejs_coords,

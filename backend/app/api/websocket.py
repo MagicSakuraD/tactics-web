@@ -28,7 +28,7 @@ async def websocket_simulation_endpoint(websocket: WebSocket):
 
             if message_type == "start_session_stream":
                 session_id = message_data.get("session_id")
-                fps = message_data.get("fps", 25)
+                fps = message_data.get("fps", 10)# 默认帧率为25
                 await handle_session_stream(client_id, session_id, fps)
             
             elif message_type == "ping":

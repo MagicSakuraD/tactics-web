@@ -24,24 +24,24 @@ class SimpleDataFormatter:
                 vehicle_data = {
                     "id": int(pid) if str(pid).isdigit() else hash(str(pid)) % 10000,
                     "position": {
-                        "x": float(position[0]),
-                        "y": 0.0,  # Three.js会处理Y轴
-                        "z": float(-position[1])  # 转换坐标系
+                        "x": float(position[0]),  # X坐标保持不变
+                        "y": 0.9,  # 车辆高度的一半，让车辆"站"在地面上
+                        "z": float(position[1])  # Y坐标映射到Z轴，不取负号以匹配地图坐标系
                     },
                     "velocity": {
                         "x": float(velocity[0]) if len(velocity) > 0 else 0.0,
                         "y": 0.0,
-                        "z": float(-velocity[1]) if len(velocity) > 1 else 0.0
+                        "z": float(velocity[1]) if len(velocity) > 1 else 0.0  # 不取负号
                     },
                     "rotation": {
                         "x": 0.0,
-                        "y": float(heading),
+                        "y": float(heading),  # 绕Y轴旋转（车辆朝向）
                         "z": 0.0
                     },
                     "dimensions": {
-                        "x": 4.5,  # 默认车辆尺寸
-                        "y": 1.8,
-                        "z": 2.0
+                        "x": 4.5,  # 车辆长度
+                        "y": 1.8,  # 车辆高度
+                        "z": 2.0   # 车辆宽度
                     },
                     "color": SimpleDataFormatter._get_vehicle_color(vehicle_type),
                     "type": vehicle_type
@@ -95,7 +95,7 @@ class SimpleDataFormatter:
                 if not coords:
                     points = boundary.get("points", [])
                     if points and len(points) > 1:
-                        coords = [[p[0], 0.0, p[1]] if len(p) >= 2 else [0, 0, 0] for p in points]
+                        coords = [[p[0], 0.0, -p[1]] if len(p) >= 2 else [0, 0, 0] for p in points]
                 
                 if coords and len(coords) > 1:
                     # 根据类型决定颜色
@@ -170,7 +170,7 @@ class SimpleDataFormatter:
             "boundaries": boundaries,
             "metadata": {
                 "bounds": map_info.get("boundary", {}),
-                "scale": map_info.get("metadata", {}).get("coordinate_scale", 1.0),
+                "scale": map_info.get("metadata", {}).get("coordinate_scale", 100000),  # 使用正确的默认值
                 "units": "meters",
                 "total_elements": len(roads) + len(lanes) + len(boundaries),
                 "has_geometry": len(roads) + len(lanes) + len(boundaries) > 0,

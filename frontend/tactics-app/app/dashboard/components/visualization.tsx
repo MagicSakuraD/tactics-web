@@ -8,33 +8,43 @@ import * as THREE from "three";
 // 定义车辆数据类型（基于后端实际数据格式）
 interface VehicleData {
   id: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  heading: number;
+  x: number; // X坐标（沿道路方向）
+  y: number; // Y坐标（横向方向）
+  vx: number; // X方向速度
+  vy: number; // Y方向速度
+  heading: number; // 车辆朝向（弧度）
 }
 
 // 单个车辆的组件
 const Vehicle = ({ data }: { data: VehicleData }) => {
   const ref = useRef<THREE.Mesh>(null!);
 
-  // 从后端的平面数据格式转换为Three.js所需的3D格式
-  // 使用默认的车辆尺寸
-  const position: [number, number, number] = [data.x || 0, data.y || 0, 0.5];
-  const rotation: [number, number, number] = [0, 0, data.heading || 0];
-  const dimensions: [number, number, number] = [4.5, 2.0, 1.8]; // 长x宽x高（米）
-  
-  // 根据速度计算颜色
-  const speed = Math.sqrt((data.vx || 0) ** 2 + (data.vy || 0) ** 2);
+  // 🔧 坐标系转换：2D车辆数据 -> 3D Three.js坐标
+  // 车辆数据: (x, y) 在2D平面上，x是沿道路方向，y是横向
+  // Three.js: x-右, y-上, z-深度（右手坐标系）
+  // 转换: 车辆x -> Three.js x, 车辆y -> Three.js z, 高度 -> Three.js y
+  const position: [number, number, number] = [
+    data.x, // X坐标（沿道路方向）
+    0.9, // Y坐标（车辆高度的一半，让车辆"站"在地面上）
+    data.y, // Z坐标（横向方向，与地图坐标系一致）
+  ];
+
+  // 🧭 旋转调整：heading角度绕y轴（垂直轴）旋转
+  const rotation: [number, number, number] = [
+    0, // 不绕X轴旋转
+    data.heading, // 绕Y轴旋转（车辆朝向）
+    0, // 不绕Z轴旋转
+  ];
+
+  // 🚗 车辆尺寸：典型轿车尺寸（长x高x宽）米
+  const dimensions: [number, number, number] = [4.5, 1.8, 2.0];
+
+  // 🎨 根据速度计算颜色
+  const speed = Math.sqrt(data.vx ** 2 + data.vy ** 2);
   const color = speed > 15 ? "#ff4444" : speed > 8 ? "#ffaa44" : "#44aa44";
 
   return (
-    <mesh
-      ref={ref}
-      position={position}
-      rotation={rotation}
-    >
+    <mesh ref={ref} position={position} rotation={rotation}>
       <boxGeometry args={dimensions} />
       <meshStandardMaterial color={color} />
     </mesh>
@@ -118,7 +128,7 @@ const Visualization = ({
   return (
     <div className="relative w-full h-full">
       <Canvas
-        camera={{ position: [0, 100, 150], fov: 50 }}
+        camera={{ position: [200, 50, 50], fov: 50 }} // 调整摄像机位置到场景中心
         style={{ width: "100%", height: "100%", background: "#1a1a1a" }}
       >
         <ambientLight intensity={1.5} />
@@ -129,10 +139,9 @@ const Visualization = ({
           screenSpacePanning={false}
           maxPolarAngle={Math.PI / 2}
         />
-        <gridHelper args={[100, 20, "#444", "#888"]} />
-
+        <gridHelper args={[800, 40, "#444", "#888"]} />{" "}
+        {/* 增大网格以覆盖更大的范围 */}
         <Map mapData={mapData} />
-
         {frameData &&
           frameData.vehicles &&
           frameData.vehicles.map((vehicle: VehicleData) => (

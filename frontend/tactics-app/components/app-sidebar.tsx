@@ -58,18 +58,6 @@ const data = {
       icon: Monitor,
       isActive: true,
     },
-    {
-      title: "数据集",
-      url: "/datasets",
-      icon: Database,
-      isActive: false,
-    },
-    {
-      title: "文档",
-      url: "/docs",
-      icon: FileText,
-      isActive: false,
-    },
   ],
 };
 
@@ -237,7 +225,7 @@ export function AppSidebar({
                               </CardContent>
                             </Card>
 
-                            <Card className="border shadow-sm">
+                            {/* <Card className="border shadow-sm">
                               <CardContent className="p-3">
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center space-x-2">
@@ -264,7 +252,7 @@ export function AppSidebar({
                                   ></div>
                                 </div>
                               </CardContent>
-                            </Card>
+                            </Card> */}
                           </div>
                         </div>
                       </CollapsibleContent>
