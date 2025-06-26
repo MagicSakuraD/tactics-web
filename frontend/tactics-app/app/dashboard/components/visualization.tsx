@@ -2,7 +2,12 @@
 
 import React, { useEffect, useRef } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
-import { OrbitControls, Line } from "@react-three/drei";
+import {
+  OrbitControls,
+  Line,
+  GizmoHelper,
+  GizmoViewport,
+} from "@react-three/drei";
 import * as THREE from "three";
 
 // 定义车辆数据类型（基于后端实际数据格式）
@@ -128,7 +133,7 @@ const Visualization = ({
   return (
     <div className="relative w-full h-full">
       <Canvas
-        camera={{ position: [200, 50, 50], fov: 50 }} // 调整摄像机位置到场景中心
+        camera={{ position: [0, 50, 0], fov: 50 }} // 调整摄像机位置到场景中心
         style={{ width: "100%", height: "100%", background: "#1a1a1a" }}
       >
         <ambientLight intensity={1.5} />
@@ -139,7 +144,17 @@ const Visualization = ({
           screenSpacePanning={false}
           maxPolarAngle={Math.PI / 2}
         />
-        <gridHelper args={[800, 40, "#444", "#888"]} />{" "}
+        {/* <gridHelper args={[800, 40, "#444", "#888"]} /> */}
+        <GizmoHelper
+          alignment="bottom-right" // widget alignment within scene
+          margin={[80, 80]} // widget margins (X, Y)
+        >
+          <GizmoViewport
+            axisColors={["red", "green", "blue"]}
+            labelColor="black"
+          />
+          {/* alternative: <GizmoViewcube /> */}
+        </GizmoHelper>
         {/* 增大网格以覆盖更大的范围 */}
         <Map mapData={mapData} />
         {frameData &&

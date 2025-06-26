@@ -85,7 +85,7 @@ export default function DatasetConfigPage() {
       dataset_path: "",
       map_path: "",
       perception_range: 30,
-      frame_step: 10,
+      frame_step: 5,
     },
   });
 

@@ -122,7 +122,7 @@ export const useWebSocket = (
 
   // 唯一需要的主动发送函数：开始会话流
   const startSessionStream = useCallback(
-    (sessionId: string, fps: number = 25) => {
+    (sessionId: string, fps: number = 10) => {
       // 在发送开始指令前，确保连接是打开的
       const waitForConnection = (
         callback: () => void,

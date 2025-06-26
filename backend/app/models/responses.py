@@ -46,7 +46,7 @@ class SimulationSession(BaseModel):
     created_at: datetime = Field(..., description="创建时间")
     current_timestamp: int = Field(0, description="当前时间戳")
     total_duration: int = Field(..., description="总时长")
-    fps: int = Field(25, description="当前帧率")
+    fps: int = Field(25, description="当前帧率") #
 
 class TrajectoryData(BaseModel):
     """轨迹数据响应"""

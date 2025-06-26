@@ -118,7 +118,7 @@ export default function DashboardPage() {
 
     if (simulationStatus === "idle" || simulationStatus === "stopped") {
       toast.info("▶️ 开始播放...");
-      startSessionStream(sessionId, 25); // 以25 FPS开始流
+      startSessionStream(sessionId, 10); // 以25 FPS开始流
       setSimulationStatus("running");
     } else if (simulationStatus === "running") {
       // 注意：当前的WebSocket实现不支持暂停/继续
