@@ -65,9 +65,12 @@ export const useWebSocket = (
               break;
             case "session_stream_started":
               toast.info(`🎬 数据流开始 (共 ${message.total_frames} 帧)`);
+              // ⚠️ 注意：这里可以通知父组件更新状态，但当前实现中状态由父组件管理
               break;
             case "session_stream_completed":
               toast.success("🏁 数据流传输完成");
+              // ⚠️ 注意：流完成后，前端状态应该更新为 "stopped" 或 "idle"
+              // 但当前实现中状态由父组件管理，需要在父组件中监听这个消息
               break;
             case "error":
               toast.error(`❌ WebSocket 错误: ${message.message}`);

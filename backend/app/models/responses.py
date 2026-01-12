@@ -149,6 +149,25 @@ class DatasetParseResponse(BaseModel):
     status: StatusEnum = Field(..., description="解析状态")
     message: str = Field("", description="状态消息")
 
+class MapFileInfo(BaseModel):
+    """地图文件信息"""
+    id: str = Field(..., description="文件ID")
+    path: str = Field(..., description="完整路径")
+    name: str = Field(..., description="显示名称")
+
+class DatasetFileInfo(BaseModel):
+    """数据集文件信息"""
+    file_id: int = Field(..., description="文件ID")
+    dataset_path: str = Field(..., description="数据集目录路径")
+    preview_image: Optional[str] = Field(None, description="预览图URL路径")
+    has_tracks: bool = Field(False, description="是否有轨迹文件")
+    has_meta: bool = Field(False, description="是否有元数据文件")
+
+class DataFilesResponse(BaseModel):
+    """数据文件列表响应"""
+    maps: List[MapFileInfo] = Field(default_factory=list, description="可用地图文件列表")
+    datasets: Dict[str, List[DatasetFileInfo]] = Field(default_factory=dict, description="各数据集类型的文件列表")
+
 class TrajectoryFrame(BaseModel):
     """单帧轨迹数据"""
     frame_number: int = Field(..., description="帧号")

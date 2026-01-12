@@ -2,7 +2,8 @@
 
 # 📊 数据集解析服务 - 专门处理LevelX等数据集的解析
 import logging
-from typing import Dict, Any, List, Tuple
+import math
+from typing import Dict, Any, List, Tuple, Optional
 from collections import defaultdict
 
 # 设置日志
@@ -27,121 +28,476 @@ class DatasetParserService:
         """检查tactics2d库是否成功导入"""
         return TACTICS2D_AVAILABLE
 
-    def _restructure_for_streaming(self, participants: Dict[int, Any], frame_step: int, actual_stamp_range: Tuple[int, int] = None) -> Dict[int, List[Dict]]:
+    def _log_participant_statistics(self, participants: Dict[int, Any]):
         """
-        将tactics2d返回的 "以参与者为中心" 的数据重构为 "以帧为中心" 的数据。
-        这是将数据适配到前端渲染的关键步骤。
-
+        统计并打印参与者的详细信息，包括类型、尺寸分布等
+        
         Args:
-            participants: tactics2d的parse_trajectory返回的原始参与者字典。
-            frame_step: 数据处理的帧间隔步长。
-            actual_stamp_range: 实际的时间戳范围（来自parse_trajectory返回值）
-
-        Returns:
-            一个以帧号为键，值为该帧所有车辆状态列表的字典。
+            participants: 参与者字典
         """
-        frames = defaultdict(list)
         if not participants:
-            return {}
-
-        logger.info(f"🔄 开始重构数据结构，共 {len(participants)} 个参与者...")
+            logger.warning("⚠️ 参与者字典为空，无法统计")
+            return
         
-        # 添加一个标志，确保我们只打印一次调试信息
-        debug_info_printed = False
-
-        # 根据官方文档，使用全局时间范围来迭代，而不是单个轨迹的时间范围
-        if not actual_stamp_range:
-            logger.error("❌ 缺少实际时间戳范围，无法重构数据")
-            return {}
+        # 统计不同类型
+        type_counts = {}
+        type_details = {}  # 存储每种类型的详细信息
+        
+        # 尺寸统计
+        length_stats = {'min': float('inf'), 'max': 0.0, 'sum': 0.0, 'count': 0}
+        width_stats = {'min': float('inf'), 'max': 0.0, 'sum': 0.0, 'count': 0}
+        
+        # 获取属性访问器
+        try:
+            sample_participant = next(iter(participants.values()))
+            _, _, participant_attr_getter = self._detect_participant_api(sample_participant)
+        except Exception as e:
+            logger.warning(f"⚠️ 无法检测参与者API，跳过详细统计: {e}")
+            return
+        
+        # 遍历所有参与者进行统计
+        for p_id, p_obj in participants.items():
+            try:
+                # 获取类型
+                # 注意：tracksMeta.csv 的字段名是 'class'，不是 'type'
+                vehicle_type_class = participant_attr_getter(p_obj, 'class')
+                vehicle_type_type = participant_attr_getter(p_obj, 'type')
+                vehicle_type = vehicle_type_class or vehicle_type_type
+                
+                # 调试日志：记录前几个参与者的类型获取情况（包括Truck）
+                if p_id <= 5 or (vehicle_type_class and vehicle_type_class != 'Car'):
+                    logger.debug(f"🔍 参与者 {p_id}: class={vehicle_type_class}, type={vehicle_type_type}, 最终={vehicle_type}")
+                
+                # 如果获取失败，使用默认值
+                if not vehicle_type:
+                    vehicle_type = 'Car'  # 默认值
+                    if p_id <= 5:
+                        logger.debug(f"⚠️ 参与者 {p_id} 无法获取类型，使用默认值 'Car'")
+                else:
+                    vehicle_type = str(vehicle_type).strip()  # 转换为字符串并去除空格
+                
+                # 验证类型值是否合理（Car 或 Truck）
+                if vehicle_type not in ['Car', 'Truck']:
+                    # 如果类型不在预期范围内，记录警告并使用默认值
+                    logger.warning(f"⚠️ 参与者 {p_id} 的类型 '{vehicle_type}' 不在预期范围内（应为 Car 或 Truck），使用默认值 'Car'")
+                    vehicle_type = 'Car'
+                
+                # 统计类型数量
+                if vehicle_type not in type_counts:
+                    type_counts[vehicle_type] = 0
+                    type_details[vehicle_type] = {
+                        'ids': [],
+                        'lengths': [],
+                        'widths': []
+                    }
+                type_counts[vehicle_type] += 1
+                type_details[vehicle_type]['ids'].append(int(p_id))
+                
+                # 获取尺寸
+                # ⚠️ 重要：HighD数据集的字段命名反直觉！
+                # - width 列 → 实际是车辆长度（沿X轴，4.85米）
+                # - height 列 → 实际是车辆宽度（沿Y轴，2.12米）
+                raw_val_1 = participant_attr_getter(p_obj, 'width')   # CSV的width，实际是车长
+                raw_val_2 = participant_attr_getter(p_obj, 'height')  # CSV的height，实际是车宽
+                
+                # 智能修正：通过数值大小判断哪个是长度哪个是宽度
+                val_a = float(raw_val_1) if raw_val_1 else 0
+                val_b = float(raw_val_2) if raw_val_2 else 0
+                
+                if val_a > val_b:
+                    vehicle_length = val_a  # 大的是长度
+                    vehicle_width = val_b   # 小的是宽度
+                else:
+                    vehicle_length = val_b
+                    vehicle_width = val_a
+                
+                # 兜底默认值
+                if not vehicle_length or vehicle_length < 1.0:
+                    vehicle_length = 4.5  # 默认轿车长度
+                if not vehicle_width or vehicle_width < 0.5:
+                    vehicle_width = 2.0  # 默认轿车宽度
+                
+                vehicle_height_attr = None  # tracksMeta.csv 没有真正的"高度"字段
+                
+                vehicle_length = float(vehicle_length)
+                vehicle_width = float(vehicle_width)
+                
+                # 更新尺寸统计
+                length_stats['min'] = min(length_stats['min'], vehicle_length)
+                length_stats['max'] = max(length_stats['max'], vehicle_length)
+                length_stats['sum'] += vehicle_length
+                length_stats['count'] += 1
+                
+                width_stats['min'] = min(width_stats['min'], vehicle_width)
+                width_stats['max'] = max(width_stats['max'], vehicle_width)
+                width_stats['sum'] += vehicle_width
+                width_stats['count'] += 1
+                
+                # 记录到类型详情
+                type_details[vehicle_type]['lengths'].append(vehicle_length)
+                type_details[vehicle_type]['widths'].append(vehicle_width)
+                
+            except Exception as e:
+                logger.debug(f"⚠️ 统计参与者 {p_id} 时出错: {e}")
+                continue
+        
+        # 打印统计信息
+        logger.info("=" * 60)
+        logger.info("📊 参与者详细统计:")
+        logger.info(f"   👥 总参与者数: {len(participants)}")
+        
+        # 按类型统计
+        logger.info("   🚗 参与者类型分布:")
+        sorted_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)
+        for vehicle_type, count in sorted_types:
+            percentage = (count / len(participants)) * 100
+            logger.info(f"      • {vehicle_type}: {count} 个 ({percentage:.1f}%)")
             
+            # 显示该类型的尺寸范围
+            if vehicle_type in type_details:
+                lengths = type_details[vehicle_type]['lengths']
+                widths = type_details[vehicle_type]['widths']
+                if lengths and widths:
+                    avg_length = sum(lengths) / len(lengths)
+                    avg_width = sum(widths) / len(widths)
+                    min_length = min(lengths)
+                    max_length = max(lengths)
+                    min_width = min(widths)
+                    max_width = max(widths)
+                    logger.info(f"        尺寸范围: 长度 {min_length:.2f}-{max_length:.2f}m (平均 {avg_length:.2f}m), "
+                              f"宽度 {min_width:.2f}-{max_width:.2f}m (平均 {avg_width:.2f}m)")
+        
+        # 整体尺寸统计
+        if length_stats['count'] > 0:
+            avg_length = length_stats['sum'] / length_stats['count']
+            avg_width = width_stats['sum'] / width_stats['count']
+            logger.info("   📏 整体尺寸统计:")
+            logger.info(f"      长度范围: {length_stats['min']:.2f} - {length_stats['max']:.2f}m (平均 {avg_length:.2f}m)")
+            logger.info(f"      宽度范围: {width_stats['min']:.2f} - {width_stats['max']:.2f}m (平均 {avg_width:.2f}m)")
+        
+        logger.info("=" * 60)
+
+    def _detect_participant_api(self, sample_participant: Any) -> tuple:
+        """
+        检测Participant对象的API接口，避免在循环中反复检查
+        
+        Args:
+            sample_participant: 一个样本参与者对象
+            
+        Returns:
+            (get_state_method, state_attr_getter, participant_attr_getter) 元组
+            - get_state_method: 获取状态的方法（callable）
+            - state_attr_getter: 从state对象获取属性的函数
+            - participant_attr_getter: 从participant对象获取静态属性的函数
+        """
+        # 检测获取状态的方法
+        if hasattr(sample_participant, 'get_state_at_timestamp'):
+            get_state_method = sample_participant.get_state_at_timestamp
+        elif hasattr(sample_participant, 'get_state'):
+            get_state_method = sample_participant.get_state
+        else:
+            raise AttributeError("Participant对象缺少get_state方法")
+        
+        # 检测State对象的属性名称（只检测一次）
+        if not hasattr(sample_participant, 'is_active'):
+            raise AttributeError("Participant对象缺少is_active方法")
+        
+        # 获取一个样本state来检测属性
+        # 尝试获取第一个可能的时间戳的状态
+        sample_state = None
+        detection_error = None
+        try:
+            # 尝试获取一个状态来检测属性结构
+            if hasattr(sample_participant, 'trajectory'):
+                traj = sample_participant.trajectory
+                if hasattr(traj, 'stamps') and traj.stamps:
+                    sample_timestamp = traj.stamps[0]
+                    sample_state = get_state_method(sample_timestamp)
+                    if sample_state is None:
+                        detection_error = "get_state_method返回None"
+                else:
+                    detection_error = "trajectory.stamps为空或不存在"
+            else:
+                detection_error = "Participant对象没有trajectory属性"
+        except Exception as e:
+            detection_error = f"获取样本状态时出错: {str(e)}"
+            logger.debug(f"State属性检测详细错误: {e}", exc_info=True)
+        
+        if sample_state is None:
+            # 如果无法获取样本，使用默认属性名（Tactics2D标准）
+            # 这通常是可以接受的，因为Tactics2D的标准属性就是 x, y, vx, vy, heading
+            logger.info(f"ℹ️ 使用默认State属性名 (x, y, vx, vy, heading). 原因: {detection_error or '无法获取样本状态'}")
+            def attr_getter(state, attr_name):
+                return getattr(state, attr_name, 0.0)
+        else:
+            # 检测实际属性名
+            state_attrs = {}
+            for standard_name in ['x', 'y', 'vx', 'vy', 'heading']:
+                # 尝试标准名称
+                if hasattr(sample_state, standard_name):
+                    state_attrs[standard_name] = standard_name
+                # 尝试替代名称
+                elif standard_name == 'x' and hasattr(sample_state, 'position_x'):
+                    state_attrs[standard_name] = 'position_x'
+                elif standard_name == 'y' and hasattr(sample_state, 'position_y'):
+                    state_attrs[standard_name] = 'position_y'
+                elif standard_name == 'vx' and hasattr(sample_state, 'velocity_x'):
+                    state_attrs[standard_name] = 'velocity_x'
+                elif standard_name == 'vy' and hasattr(sample_state, 'velocity_y'):
+                    state_attrs[standard_name] = 'velocity_y'
+                elif standard_name == 'heading' and hasattr(sample_state, 'orientation'):
+                    state_attrs[standard_name] = 'orientation'
+                else:
+                    state_attrs[standard_name] = standard_name  # 使用默认值0.0
+            
+            def attr_getter(state, attr_name):
+                actual_attr = state_attrs.get(attr_name, attr_name)
+                return getattr(state, actual_attr, 0.0)
+        
+        # 检测Participant对象的静态属性（width, height, type等）
+        # 这些属性通常不会变化，可以从participant对象直接获取
+        debug_dump_flag = {'logged': False}  # 仅在首次缺失时打印一次详细信息，避免刷屏
+
+        def participant_attr_getter(participant, attr_name):
+            """从Participant对象获取静态属性"""
+            # 尝试多种可能的属性名
+            # 注意：tracksMeta.csv 的字段名是 'class'，不是 'type'
+            possible_names = {
+                'width': ['width', 'w', 'vehicle_width'],
+                'height': ['height', 'h', 'vehicle_height', 'length'],  # 注意：highD的height实际是长度
+                'length': ['length', 'l', 'vehicle_length'],
+                # type & class 字段常见的重命名：type_, class_
+                'type': ['type', 'type_', 'class', 'class_', 'vehicle_type', 'vehicle_class'],  # type 可以尝试 class
+                'class': ['class', 'class_', 'type', 'type_', 'vehicle_class', 'vehicle_type']  # class 优先尝试 'class'，因为这是CSV的实际字段名
+            }
+            
+            # 获取可能的属性名列表
+            candidates = possible_names.get(attr_name, [attr_name])
+            
+            for candidate in candidates:
+                if hasattr(participant, candidate):
+                    value = getattr(participant, candidate)
+                    # 如果是字符串，直接返回
+                    if isinstance(value, str):
+                        return value
+                    # 如果是数值，转换为float
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        return value
+
+            # 检查 custom_tags 字段（Tactics2D 可能把类型放在这里）
+            try:
+                if hasattr(participant, "custom_tags"):
+                    tags = getattr(participant, "custom_tags")
+                    if isinstance(tags, dict):
+                        # 优先匹配 attr_name，其次匹配 'class'/'type'
+                        if attr_name in tags:
+                            return tags[attr_name]
+                        if attr_name == 'class' and 'class' in tags:
+                            return tags['class']
+                        if attr_name == 'type' and 'type' in tags:
+                            return tags['type']
+            except Exception:
+                pass
+
+            # 如果仍然找不到，打印一次调试信息，帮助定位真实字段名
+            if attr_name in ('class', 'type') and not debug_dump_flag['logged']:
+                try:
+                    debug_dump_flag['logged'] = True
+                    attrs = dir(participant)
+                    attr_keys = list(getattr(participant, "__dict__", {}).keys())
+                    logger.info(f"🔍 未找到属性 '{attr_name}'，打印Participant调试信息用于排查字段映射问题")
+                    logger.info(f"   dir(participant): {attrs}")
+                    logger.info(f"   participant.__dict__.keys(): {attr_keys}")
+                    if hasattr(participant, "custom_tags"):
+                        logger.info(f"   participant.custom_tags: {getattr(participant, 'custom_tags')}")
+                except Exception:
+                    pass
+            
+            # 如果都没找到，返回默认值
+            # ⚠️ 重要：'type' 和 'class' 不设置默认值，返回 None
+            # 这样可以区分"找不到属性"和"属性值为默认值"的情况
+            # 调用者需要根据实际情况处理 None 值（例如，如果找不到 class，再使用默认值 'Car'）
+            defaults = {
+                'width': 2.0,
+                'height': 1.8,
+                'length': 4.5,
+                # 'type' 和 'class' 不设置默认值，返回 None
+            }
+            return defaults.get(attr_name, None)
+        
+        return get_state_method, attr_getter, participant_attr_getter
+
+    def _restructure_for_streaming(
+        self, 
+        participants: Dict[int, Any], 
+        frame_step: int, 
+        actual_stamp_range: Tuple[int, int] = None,
+        perception_range: Optional[float] = None,
+        reference_point: Optional[Tuple[float, float]] = None,
+        coordinate_scale: float = 1.0
+    ) -> Dict[int, List[Dict]]:
+        """
+        优化后的数据重构方法：直接按步长采样，避免无效计算。
+        
+        性能优化：
+        1. 直接按effective_step跳跃循环，只计算需要的帧
+        2. 预先检测API接口，避免循环中反复hasattr/getattr
+        3. 移除多余的排序操作（range本身有序，字典保持插入顺序）
+        
+        Args:
+            participants: tactics2d的parse_trajectory返回的原始参与者字典
+            frame_step: 数据处理的帧间隔步长（前端播放速度倍数）
+            actual_stamp_range: 实际的时间戳范围（来自parse_trajectory返回值）
+            perception_range: (可选) 感知范围（米），用于空间裁剪
+            reference_point: (可选) 参考点坐标 (x, y)，用于计算距离
+            coordinate_scale: (可选) 坐标缩放比例，用于与地图坐标系统匹配（默认1.0）
+            
+        Returns:
+            一个以帧号为键（从0开始），值为该帧所有车辆状态列表的字典
+        """
+        if not participants or not actual_stamp_range:
+            return {}
+        
         start_time, end_time = actual_stamp_range
-        logger.info(f"🕐 使用时间范围: {start_time}ms 到 {end_time}ms")
         
-        # 按时间间隔采样（每40ms，对应25Hz）
-        time_step = 40  # 毫秒
-        processed_count = 0
+        # LevelX数据集（highD等）的采样频率是25Hz，即每40ms一帧
+        # 参考：https://tactics2d.readthedocs.io/en/latest/api/dataset_parser/
+        BASE_TIME_STEP = 40  # 毫秒
         
-        for timestamp in range(int(start_time), int(end_time), time_step):
+        # 计算实际采样间隔：基础间隔 × 帧步长
+        # 例如 frame_step=5 时，每200ms采样一次（5倍速播放）
+        effective_step = BASE_TIME_STEP * frame_step
+        
+        logger.info(f"🔄 优化重构: {len(participants)} 个参与者, 时间范围 {start_time}-{end_time}ms")
+        logger.info(f"   采样间隔: {effective_step}ms (基础: {BASE_TIME_STEP}ms × 步长: {frame_step})")
+        
+        # 预先检测API接口（只检测一次，不在循环中重复检查）
+        try:
+            sample_participant = next(iter(participants.values()))
+            get_state_method, state_attr_getter, participant_attr_getter = self._detect_participant_api(sample_participant)
+            logger.debug(f"✅ API检测完成: get_state方法={get_state_method.__name__}")
+        except Exception as e:
+            logger.error(f"❌ API检测失败: {e}")
+            return {}
+        
+        sampled_frames = {}
+        frame_index = 0  # 前端需要的连续帧号（从0开始）
+        
+        # 直接按effective_step跳跃循环，只计算需要的帧
+        # Python 3.7+ 字典保持插入顺序，无需额外排序
+        for timestamp in range(int(start_time), int(end_time), effective_step):
             frame_participants = []
             
             for p_id, p_obj in participants.items():
-                # --- 调试日志（只打印一次）---
-                if not debug_info_printed:
-                    logger.info("=================================================")
-                    logger.info(f"🔍 DEBUG: Inspecting Participant object structure for participant ID: {p_id}")
-                    logger.info(f"   - Object Type: {type(p_obj)}")
-                    logger.info(f"   - Object Representation: {p_obj}")
-                    logger.info(f"   - Object Attributes (using dir()): {dir(p_obj)}")
-                    if hasattr(p_obj, '__dict__'):
-                        logger.info(f"   - Object __dict__: {p_obj.__dict__}")
-                    if hasattr(p_obj, 'trajectory'):
-                        logger.info(f"   - Trajectory Type: {type(p_obj.trajectory)}")
-                        logger.info(f"   - Trajectory Attributes: {dir(p_obj.trajectory)}")
-                    logger.info("=================================================")
-                    debug_info_printed = True
-                # --- 结束调试 ---
-                
-                # 检查参与者在此时间戳是否活跃
                 try:
-                    if not hasattr(p_obj, 'is_active'):
-                        logger.warning(f"⚠️ 参与者 {p_id} 缺少 is_active 方法")
-                        continue
-                        
+                    # 快速检查活跃状态（已确认有is_active方法）
                     if not p_obj.is_active(timestamp):
                         continue
                     
-                    # 尝试获取特定时间戳的状态
-                    state = None
-                    if hasattr(p_obj, 'get_state_at_timestamp'):
-                        state = p_obj.get_state_at_timestamp(timestamp)
-                    elif hasattr(p_obj, 'get_state'):
-                        state = p_obj.get_state(timestamp)
-                    else:
-                        logger.warning(f"⚠️ 参与者 {p_id} 缺少获取状态的方法")
-                        continue
-                    
+                    # 获取状态（已确认方法存在）
+                    state = get_state_method(timestamp)
                     if state is None:
                         continue
-
+                    
+                    # 提取静态属性（尺寸和类型）- 这些属性不会随时间变化
+                    # ⚠️ 重要：HighD数据集的字段命名非常反直觉！
+                    # HighD坐标系定义：
+                    # - X轴：沿道路延伸方向（Longitudinal）→ 车长方向
+                    # - Y轴：垂直于道路方向（Lateral）→ 车宽方向
+                    # 
+                    # 因此：
+                    # - tracks.csv 和 tracksMeta.csv 的 `width` 列 → 实际是车辆长度（沿X轴）
+                    # - tracks.csv 和 tracksMeta.csv 的 `height` 列 → 实际是车辆宽度（沿Y轴）
+                    # 
+                    # 示例：车辆1的数据
+                    # - width = 4.85 → 这是车长（4.85米，符合轿车长度）
+                    # - height = 2.12 → 这是车宽（2.12米，符合轿车宽度）
+                    
+                    # 1. 获取原始值（不管属性名，先拿数值）
+                    raw_val_1 = participant_attr_getter(p_obj, 'width')   # CSV的width，实际是车长
+                    raw_val_2 = participant_attr_getter(p_obj, 'height')  # CSV的height，实际是车宽
+                    
+                    # 获取车辆类型：tracksMeta.csv 的字段名是 'class'，不是 'type'
+                    vehicle_type = participant_attr_getter(p_obj, 'class') or participant_attr_getter(p_obj, 'type')
+                    if not vehicle_type:
+                        vehicle_type = 'Car'  # 默认值
+                    else:
+                        vehicle_type = str(vehicle_type).strip()
+                        # 验证类型值
+                        if vehicle_type not in ['Car', 'Truck']:
+                            vehicle_type = 'Car'  # 如果类型异常，使用默认值
+                    
+                    # 2. 智能修正：通过数值大小判断哪个是长度哪个是宽度
+                    # 逻辑：对于车辆来说，长 > 宽 几乎是绝对真理
+                    val_a = float(raw_val_1) if raw_val_1 else 0
+                    val_b = float(raw_val_2) if raw_val_2 else 0
+                    
+                    if val_a > val_b:
+                        vehicle_length = val_a  # 大的是长度（通常是width列的值，如4.85）
+                        vehicle_width = val_b   # 小的是宽度（通常是height列的值，如2.12）
+                    else:
+                        # 如果数据异常（宽>长），按原值处理
+                        vehicle_length = val_b
+                        vehicle_width = val_a
+                    
+                    # 3. 兜底默认值（防止异常数据）
+                    if not vehicle_length or vehicle_length < 1.0:
+                        vehicle_length = 4.5  # 默认轿车长度
+                    if not vehicle_width or vehicle_width < 0.5:
+                        vehicle_width = 2.0  # 默认轿车宽度
+                    
+                    # 获取原始坐标（未缩放）
+                    x_raw = float(state_attr_getter(state, 'x'))
+                    y_raw = float(state_attr_getter(state, 'y'))
+                    
+                    # 空间过滤：如果设置了perception_range，只保留范围内的车辆
+                    # 注意：过滤使用原始坐标（米），因为perception_range也是以米为单位
+                    if perception_range and reference_point:
+                        ref_x, ref_y = reference_point
+                        distance = math.sqrt((x_raw - ref_x)**2 + (y_raw - ref_y)**2)
+                        if distance > perception_range:
+                            continue  # 跳过超出感知范围的车辆
+                    
+                    # 应用坐标缩放，与地图坐标系统匹配
+                    # 地图坐标经过了coordinate_scale缩放（如111000），车辆坐标也需要应用相同的缩放
+                    x_scaled = x_raw * coordinate_scale
+                    y_scaled = y_raw * coordinate_scale
+                    
+                    # 直接使用预检测的属性访问器（避免getattr开销）
                     frame_participants.append({
                         "id": int(p_id),
-                        "x": float(getattr(state, 'x', getattr(state, 'position_x', 0.0))),
-                        "y": float(getattr(state, 'y', getattr(state, 'position_y', 0.0))),
-                        "vx": float(getattr(state, 'vx', getattr(state, 'velocity_x', 0.0))),
-                        "vy": float(getattr(state, 'vy', getattr(state, 'velocity_y', 0.0))),
-                        "heading": float(getattr(state, 'heading', getattr(state, 'orientation', 0.0)))
+                        "x": round(x_scaled, 3),  # 应用缩放后的坐标
+                        "y": round(y_scaled, 3),  # 应用缩放后的坐标
+                        "vx": round(float(state_attr_getter(state, 'vx')), 3),  # 速度通常不需要缩放
+                        "vy": round(float(state_attr_getter(state, 'vy')), 3),  # 速度通常不需要缩放
+                        "heading": round(float(state_attr_getter(state, 'heading')), 3),
+                        # 新增：车辆尺寸和类型信息
+                        # 注意：尺寸也需要缩放，以匹配地图坐标系
+                        "length": round(float(vehicle_length) * coordinate_scale, 2) if vehicle_length else 4.5 * coordinate_scale,
+                        "width": round(float(vehicle_width) * coordinate_scale, 2) if vehicle_width else 2.0 * coordinate_scale,
+                        "type": str(vehicle_type) if vehicle_type else "Car"
                     })
                     
                 except Exception as participant_error:
-                    logger.warning(f"⚠️ 处理参与者 {p_id} 在时间戳 {timestamp} 时出错: {participant_error}")
+                    # 只在调试模式下记录详细错误
+                    logger.debug(f"⚠️ 参与者 {p_id} 在时间戳 {timestamp} 时出错: {participant_error}")
                     continue
             
-            # 如果这一帧有参与者，则添加到结果中
-            if frame_participants:
-                frames[timestamp] = frame_participants
-                processed_count += 1
+            # 无论这一帧有没有车，都创建帧（保持帧索引连续）
+            # 前端播放器需要连续的帧号
+            sampled_frames[frame_index] = {
+                "timestamp": timestamp,
+                "vehicles": frame_participants
+            }
+            frame_index += 1
         
-        if not frames:
+        if not sampled_frames:
             logger.warning("⚠️ 数据重构后没有生成任何帧")
             return {}
-
-        logger.info(f"✅ 成功处理了 {processed_count} 个时间戳的数据")
-
-        # 按帧步长进行抽样
-        sorted_frames = sorted(frames.items())
-        sampled_frames = {}
         
-        # 我们需要一个新的、从0开始的帧索引
-        new_frame_index = 0
-        for i in range(0, len(sorted_frames), frame_step):
-            original_frame_number, frame_data = sorted_frames[i]
-            sampled_frames[new_frame_index] = {
-                "timestamp": original_frame_number,
-                "vehicles": frame_data
-            }
-            new_frame_index += 1
-
-        logger.info(f"✅ 数据重构和抽样完成，从 {len(frames)} 帧抽样为 {len(sampled_frames)} 帧 (步长: {frame_step})")
+        logger.info(f"✅ 重构完成: 生成 {len(sampled_frames)} 帧 (直接采样，无浪费计算)")
         return sampled_frames
 
     def parse_dataset_for_session(
@@ -151,7 +507,9 @@ class DatasetParserService:
         dataset_path: str,
         frame_step: int,
         stamp_range: Tuple[int, int] = None,
-        max_duration_ms: int = None
+        max_duration_ms: int = None,
+        perception_range: Optional[float] = None,
+        coordinate_scale: float = 1.0
     ) -> Dict[str, Any]:
         """
         解析指定的数据集文件，并为WebSocket会话准备数据。
@@ -163,6 +521,8 @@ class DatasetParserService:
             frame_step: 帧间隔。
             stamp_range: (可选) 时间戳范围。
             max_duration_ms: (可选) 最大持续时间。
+            perception_range: (可选) 感知范围（米）。
+            coordinate_scale: (可选) 坐标缩放比例，用于与地图坐标系统匹配（默认1.0）。
 
         Returns:
             一个包含重构后帧数据的字典，如果失败则为空字典。
@@ -185,11 +545,24 @@ class DatasetParserService:
 
         try:
             # 根据用户要求，目前只处理 highD 数据集
-            if dataset.lower() == 'highd':
-                # 修正1: LevelXParser的构造函数需要数据集的 *名称* (e.g., "highD")
-                parser = LevelXParser(dataset)
+            # LevelXParser 构造函数需要正确的数据集名称（大小写敏感）
+            # 文档：https://tactics2d.readthedocs.io/en/latest/api/dataset_parser/
+            # LevelX系列包括：highD, inD, rounD, exiD, uniD
+            dataset_lower = dataset.lower()
+            if dataset_lower == 'highd':
+                # 确保使用正确的大小写格式（highD）
+                parser = LevelXParser("highD")
+            elif dataset_lower in ['ind', 'round', 'exid', 'unid']:
+                # 支持其他LevelX数据集
+                dataset_name_map = {
+                    'ind': 'inD',
+                    'round': 'rounD',
+                    'exid': 'exiD',
+                    'unid': 'uniD'
+                }
+                parser = LevelXParser(dataset_name_map[dataset_lower])
             else:
-                logger.error(f"不支持的数据集类型: {dataset}. 目前只支持 'highD'.")
+                logger.error(f"不支持的数据集类型: {dataset}. LevelXParser支持: highD, inD, rounD, exiD, uniD")
                 return {}
 
             # 调用tactics2d的解析功能
@@ -209,14 +582,56 @@ class DatasetParserService:
 
             logger.info(f"✅ 成功从tactics2d解析了 {len(participants)} 个参与者")
             logger.info(f"🕐 实际时间戳范围: {actual_stamp_range}")
+            
+            # 统计参与者详细信息
+            self._log_participant_statistics(participants)
 
-            # 记录每个参与者的轨迹解析状态
-            if participants:
-                first_p = next(iter(participants.values()))
-                logger.info(f"🔍 示例参与者信息: 类型={type(first_p)}, 属性={list(dir(first_p))}")
+            # 计算参考点（用于perception_range空间过滤）
+            # 如果设置了perception_range，需要计算一个参考点（使用第一帧所有参与者的平均位置）
+            reference_point = None
+            if perception_range and perception_range > 0:
+                try:
+                    # 获取第一个参与者的第一个时间戳
+                    sample_participant = next(iter(participants.values()))
+                    get_state_method = None
+                    if hasattr(sample_participant, 'get_state_at_timestamp'):
+                        get_state_method = sample_participant.get_state_at_timestamp
+                    elif hasattr(sample_participant, 'get_state'):
+                        get_state_method = sample_participant.get_state
+                    
+                    if get_state_method and hasattr(sample_participant, 'trajectory'):
+                        traj = sample_participant.trajectory
+                        if hasattr(traj, 'stamps') and traj.stamps:
+                            first_timestamp = traj.stamps[0]
+                            # 获取所有参与者在第一帧的位置，计算中心点
+                            positions = []
+                            for p_obj in participants.values():
+                                if p_obj.is_active(first_timestamp):
+                                    state = get_state_method(first_timestamp)
+                                    if state:
+                                        try:
+                                            x = getattr(state, 'x', None) or getattr(state, 'position_x', 0)
+                                            y = getattr(state, 'y', None) or getattr(state, 'position_y', 0)
+                                            positions.append((float(x), float(y)))
+                                        except:
+                                            pass
+                            if positions:
+                                ref_x = sum(p[0] for p in positions) / len(positions)
+                                ref_y = sum(p[1] for p in positions) / len(positions)
+                                reference_point = (ref_x, ref_y)
+                                logger.info(f"📍 计算参考点: ({ref_x:.2f}, {ref_y:.2f}), 感知范围: {perception_range}米")
+                except Exception as e:
+                    logger.warning(f"⚠️ 无法计算参考点，将禁用空间过滤: {e}")
 
             # 重构数据以进行流式传输，传递实际时间戳范围
-            restructured_frames = self._restructure_for_streaming(participants, frame_step, actual_stamp_range)
+            restructured_frames = self._restructure_for_streaming(
+                participants, 
+                frame_step, 
+                actual_stamp_range,
+                perception_range=perception_range,
+                reference_point=reference_point,
+                coordinate_scale=coordinate_scale  # 使用传入的坐标缩放比例
+            )
             
             # 记录空 frames
             if not restructured_frames:

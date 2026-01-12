@@ -1,9 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import logging
 import uuid
 import time
 from pathlib import Path
+from typing import Optional
 
 # 配置日志 - 确保能在终端看到输出
 logging.basicConfig(
@@ -19,10 +21,19 @@ from app.api.websocket import router as websocket_router
 from app.config import settings
 from app.services.map_service import map_service
 from app.services.dataset_parser_service import dataset_parser_service
+from app.services.data_scan_service import data_scan_service
 from app.models.requests import DatasetConfig
-from app.models.responses import SimulationInitResponse, MapData, SessionInfoResponse
+from app.models.responses import (
+    SimulationInitResponse, 
+    MapData, 
+    SessionInfoResponse,
+    DataFilesResponse,
+    MapFileInfo,
+    DatasetFileInfo
+)
 from app.utils.simple_formatter import data_formatter
 import app.state as state  # 导入全局状态模块
+from fastapi.staticfiles import StaticFiles
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -60,6 +71,72 @@ app.add_middleware(
 
 # 注册WebSocket路由
 app.include_router(websocket_router)
+
+# 静态文件服务 - 用于提供预览图
+# 注意：这允许访问 data 目录下的文件，仅用于开发环境
+if settings.DEBUG:
+    try:
+        app.mount("/static/data", StaticFiles(directory=str(settings.DATA_DIR)), name="data")
+    except Exception as e:
+        logger.warning(f"无法挂载静态文件服务: {e}")
+
+@app.get("/api/data/files", response_model=DataFilesResponse)
+async def get_data_files(dataset_type: Optional[str] = None):
+    """
+    获取可用的地图文件和数据集文件列表
+    
+    Args:
+        dataset_type: 可选，指定数据集类型（如 "highD"），如果不指定则返回所有类型
+        
+    Returns:
+        包含地图文件列表和数据集文件列表的响应
+    """
+    try:
+        # 扫描地图文件
+        map_files = data_scan_service.scan_map_files()
+        map_info_list = [
+            MapFileInfo(id=m.id, path=m.path, name=m.name)
+            for m in map_files
+        ]
+        
+        # 扫描数据集文件
+        dataset_info_dict = {}
+        
+        if dataset_type:
+            # 只扫描指定类型
+            dataset_files = data_scan_service.scan_dataset_files(dataset_type)
+            dataset_info_dict[dataset_type] = [
+                DatasetFileInfo(
+                    file_id=d.file_id,
+                    dataset_path=d.dataset_path,
+                    preview_image=f"/static/data/LevelX/{dataset_type}/data/{d.file_id:02d}_highway.png" if d.preview_image else None,
+                    has_tracks=d.has_tracks,
+                    has_meta=d.has_meta
+                )
+                for d in dataset_files
+            ]
+        else:
+            # 扫描所有支持的数据集类型
+            for ds_type in settings.SUPPORTED_DATASETS:
+                dataset_files = data_scan_service.scan_dataset_files(ds_type)
+                dataset_info_dict[ds_type] = [
+                    DatasetFileInfo(
+                        file_id=d.file_id,
+                        dataset_path=d.dataset_path,
+                        preview_image=f"/static/data/LevelX/{ds_type}/data/{d.file_id:02d}_highway.png" if d.preview_image else None,
+                        has_tracks=d.has_tracks,
+                        has_meta=d.has_meta
+                    )
+                    for d in dataset_files
+                ]
+        
+        return DataFilesResponse(
+            maps=map_info_list,
+            datasets=dataset_info_dict
+        )
+    except Exception as e:
+        logger.error(f"扫描数据文件失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"扫描数据文件失败: {e}")
 
 @app.get("/")
 async def root():
@@ -104,7 +181,11 @@ async def initialize_simulation(request: DatasetConfig):
         logger.info(f"🗺️ Parsing OSM map: {map_path}")
         map_info = map_service.parse_osm_map_simple(str(map_path))
         formatted_map_data = data_formatter.format_map_data(map_info)
+        
+        # 获取地图的坐标缩放比例，用于统一车辆和地图的坐标系统
+        coordinate_scale = map_info.get('metadata', {}).get('coordinate_scale', 1.0)
         logger.info(f"✅ Map parsed successfully. Found {len(formatted_map_data.get('lanes', []))} lanes.")
+        logger.info(f"📏 地图坐标缩放比例: {coordinate_scale}")
     except Exception as e:
         logger.error(f"❌ Failed to parse map file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to parse map file: {e}")
@@ -119,15 +200,33 @@ async def initialize_simulation(request: DatasetConfig):
         logger.info(f"   📄 文件ID: {request.file_id}")
         logger.info(f"   📍 数据路径: {dataset_path}")
         logger.info(f"   ⏱️ 帧步长: {request.frame_step}")
-        logger.info(f"   🕐 时间范围: {(request.stamp_start, request.stamp_end) if request.stamp_start and request.stamp_end else 'None (全部)'}")
+        
+        # ⚠️ 修复：使用 is not None 而不是直接判断，因为 0 是有效值
+        # 如果使用 if request.stamp_start，当 stamp_start = 0 时会被误判为 False
+        has_time_range = request.stamp_start is not None and request.stamp_end is not None
+        if has_time_range:
+            logger.info(f"   🕐 时间范围: ({request.stamp_start}, {request.stamp_end})")
+        else:
+            logger.info(f"   🕐 时间范围: None (全部)")
+        
+        # 处理max_duration_ms：如果设置了时间范围，限制最大时长
+        stamp_range = None
+        if has_time_range:
+            stamp_range = (request.stamp_start, request.stamp_end)
+            # 如果设置了max_duration_ms，限制时间范围
+            if request.max_duration_ms is not None and (request.stamp_end - request.stamp_start) > request.max_duration_ms:
+                stamp_range = (request.stamp_start, request.stamp_start + request.max_duration_ms)
+                logger.info(f"⏱️ 时间范围已限制为 {request.max_duration_ms}ms")
         
         session_data = dataset_parser_service.parse_dataset_for_session(
             dataset=request.dataset,
             file_id=request.file_id,
             dataset_path=str(dataset_path),
             frame_step=request.frame_step,
-            stamp_range=(request.stamp_start, request.stamp_end) if request.stamp_start and request.stamp_end else None,
-            max_duration_ms=request.max_duration_ms
+            stamp_range=stamp_range,
+            max_duration_ms=request.max_duration_ms,
+            perception_range=request.perception_range if request.perception_range and request.perception_range > 0 else None,
+            coordinate_scale=coordinate_scale  # 传递地图的坐标缩放比例
         )
         
         # 详细记录解析结果

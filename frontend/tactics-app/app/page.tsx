@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -32,7 +32,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Car, Settings, Rocket, Info, FolderOpen } from "lucide-react";
+import { Car, Settings, Rocket, Info } from "lucide-react";
 import Image from "next/image";
 
 const formSchema = z.object({
@@ -72,9 +72,31 @@ const datasetOptions = [
   { value: "womd", label: "Waymo Open Motion Dataset" },
 ];
 
+interface MapFile {
+  id: string;
+  path: string;
+  name: string;
+}
+
+interface DatasetFile {
+  file_id: number;
+  dataset_path: string;
+  preview_image: string | null;
+  has_tracks: boolean;
+  has_meta: boolean;
+}
+
 export default function DatasetConfigPage() {
   const [statusMessage, setStatusMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(true);
+  const [mapFiles, setMapFiles] = useState<MapFile[]>([]);
+  const [datasetFiles, setDatasetFiles] = useState<
+    Record<string, DatasetFile[]>
+  >({});
+  const [selectedPreviewImage, setSelectedPreviewImage] = useState<
+    string | null
+  >(null);
   const router = useRouter();
 
   const form = useForm<FormData>({
@@ -86,10 +108,64 @@ export default function DatasetConfigPage() {
       map_path: "",
       perception_range: 30,
       frame_step: 5,
+      stamp_start: 0,
+      stamp_end: 3000, // 默认结束时间 3000ms
     },
   });
 
   const selectedDataset = form.watch("dataset");
+  const selectedFileId = form.watch("file_id");
+
+  // 加载文件列表
+  useEffect(() => {
+    const loadFiles = async () => {
+      try {
+        setIsLoadingFiles(true);
+        const response = await fetch("http://localhost:8000/api/data/files");
+        if (!response.ok) throw new Error("Failed to load files");
+        const data = await response.json();
+        setMapFiles(data.maps || []);
+        setDatasetFiles(data.datasets || {});
+
+        // 设置默认值
+        if (data.maps && data.maps.length > 0) {
+          form.setValue("map_path", data.maps[0].path);
+        }
+      } catch (error) {
+        console.error("加载文件列表失败:", error);
+        setStatusMessage("⚠️ 无法加载文件列表，请手动输入路径");
+      } finally {
+        setIsLoadingFiles(false);
+      }
+    };
+    loadFiles();
+  }, [form]);
+
+  // 当数据集类型改变时，更新可用文件列表和预览图
+  useEffect(() => {
+    if (selectedDataset && datasetFiles[selectedDataset]) {
+      const files = datasetFiles[selectedDataset];
+      if (files.length > 0) {
+        const firstFile = files[0];
+        form.setValue("file_id", firstFile.file_id);
+        form.setValue("dataset_path", firstFile.dataset_path);
+        setSelectedPreviewImage(firstFile.preview_image);
+      }
+    }
+  }, [selectedDataset, datasetFiles, form]);
+
+  // 当文件ID改变时，更新预览图
+  useEffect(() => {
+    if (selectedDataset && selectedFileId && datasetFiles[selectedDataset]) {
+      const file = datasetFiles[selectedDataset].find(
+        (f) => f.file_id === selectedFileId
+      );
+      if (file) {
+        setSelectedPreviewImage(file.preview_image);
+        form.setValue("dataset_path", file.dataset_path);
+      }
+    }
+  }, [selectedFileId, selectedDataset, datasetFiles, form]);
 
   const onSubmit = async (data: FormData) => {
     setIsSubmitting(true);
@@ -109,8 +185,9 @@ export default function DatasetConfigPage() {
             file_id: data.file_id,
             dataset_path: data.dataset_path,
             map_path: data.map_path,
-            stamp_start: data.stamp_start,
-            stamp_end: data.stamp_end,
+            // ⚠️ 确保时间戳范围始终发送（使用默认值如果未设置）
+            stamp_start: data.stamp_start ?? 0,
+            stamp_end: data.stamp_end ?? 3000,
             perception_range: data.perception_range,
             frame_step: data.frame_step,
           }),
@@ -152,7 +229,7 @@ export default function DatasetConfigPage() {
             <div className="p-2 bg-blue-600 rounded-lg">
               <Car className="h-8 w-8 text-white" />
             </div>
-            <img
+            <Image
               src="/logo2.jpg"
               alt="Tactics2D Logo"
               width={200}
@@ -234,21 +311,43 @@ export default function DatasetConfigPage() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-base font-semibold">
-                          文件ID
+                          数据文件
                         </FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            min="1"
-                            className="h-12"
-                            {...field}
-                            onChange={(e) =>
-                              field.onChange(parseInt(e.target.value) || 0)
-                            }
-                          />
-                        </FormControl>
+                        <Select
+                          onValueChange={(value) => {
+                            const fileId = parseInt(value);
+                            field.onChange(fileId);
+                          }}
+                          value={field.value?.toString()}
+                          disabled={!selectedDataset || isLoadingFiles}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="h-12">
+                              <SelectValue
+                                placeholder={
+                                  isLoadingFiles
+                                    ? "加载中..."
+                                    : "请先选择数据集类型"
+                                }
+                              />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {selectedDataset &&
+                              datasetFiles[selectedDataset]?.map((file) => (
+                                <SelectItem
+                                  key={file.file_id}
+                                  value={file.file_id.toString()}
+                                >
+                                  文件{" "}
+                                  {file.file_id.toString().padStart(2, "0")}
+                                  {file.has_tracks && file.has_meta ? " ✓" : ""}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
                         <FormDescription>
-                          指定要处理的数据文件编号
+                          选择要处理的数据文件编号
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -256,56 +355,87 @@ export default function DatasetConfigPage() {
                   />
                 </div>
 
+                {/* 预览图显示 */}
+                {selectedPreviewImage && (
+                  <Card className="border-2 border-blue-200 bg-blue-50/50">
+                    <CardContent className="pt-6">
+                      <div className="flex items-center gap-4">
+                        <div className="flex-shrink-0 relative w-32 h-24">
+                          <Image
+                            src={`http://localhost:8000${selectedPreviewImage}`}
+                            alt="场景预览"
+                            fill
+                            className="object-cover rounded-lg border-2 border-blue-300"
+                            unoptimized
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-gray-700 mb-1">
+                            📸 场景预览
+                          </p>
+                          <p className="text-xs text-gray-600">
+                            这是所选数据文件的场景预览图
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
                 {/* Path Configuration */}
                 <div className="space-y-6">
-                  <FormField
-                    control={form.control}
-                    name="dataset_path"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-base font-semibold">
-                          数据集路径
-                        </FormLabel>
-                        <FormControl>
-                          <div className="relative">
-                            <Input
-                              placeholder="例如: /home/quinn/APP/Code/tactics2d/data/trajectory_sample/highD/data"
-                              className="h-12 pr-10"
-                              {...field}
-                            />
-                            <FolderOpen className="absolute right-3 top-3 h-6 w-6 text-gray-400" />
-                          </div>
-                        </FormControl>
-                        <FormDescription>
-                          包含轨迹数据文件的文件夹路径
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
                   <FormField
                     control={form.control}
                     name="map_path"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-base font-semibold">
-                          地图文件路径
+                          地图文件
                         </FormLabel>
-                        <FormControl>
-                          <div className="relative">
-                            <Input
-                              placeholder="例如: /home/quinn/APP/Code/tactics2d/data/highD_map/highD_2.osm"
-                              className="h-12 pr-10"
-                              {...field}
-                            />
-                            <FolderOpen className="absolute right-3 top-3 h-6 w-6 text-gray-400" />
-                          </div>
-                        </FormControl>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value}
+                          disabled={isLoadingFiles}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="h-12">
+                              <SelectValue
+                                placeholder={
+                                  isLoadingFiles
+                                    ? "加载中..."
+                                    : "请选择地图文件"
+                                }
+                              />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {mapFiles.map((map) => (
+                              <SelectItem key={map.id} value={map.path}>
+                                {map.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <FormDescription>
-                          OpenStreetMap (.osm) 格式的地图文件路径
+                          选择 OpenStreetMap (.osm) 格式的地图文件
                         </FormDescription>
                         <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* 隐藏的 dataset_path 字段（自动填充） */}
+                  <FormField
+                    control={form.control}
+                    name="dataset_path"
+                    render={({ field }) => (
+                      <FormItem className="hidden">
+                        <FormControl>
+                          <Input {...field} />
+                        </FormControl>
                       </FormItem>
                     )}
                   />
@@ -339,23 +469,17 @@ export default function DatasetConfigPage() {
                                   <div className="space-y-4">
                                     <Slider
                                       min={0}
-                                      max={10000}
+                                      max={30000}
                                       step={100}
                                       value={[
-                                        startField.value || 0,
-                                        endField.value || 5000,
+                                        startField.value ?? 0,
+                                        endField.value ?? 3000,
                                       ]}
                                       onValueChange={(values) => {
-                                        startField.onChange(
-                                          values[0] === 0
-                                            ? undefined
-                                            : values[0]
-                                        );
-                                        endField.onChange(
-                                          values[1] === 0
-                                            ? undefined
-                                            : values[1]
-                                        );
+                                        // ⚠️ 修复：0 是有效值，不应该转换为 undefined
+                                        // 只有当值明确被设置为 null/undefined 时才不发送
+                                        startField.onChange(values[0]);
+                                        endField.onChange(values[1]);
                                       }}
                                       className="w-full"
                                     />
@@ -365,20 +489,20 @@ export default function DatasetConfigPage() {
                                       </div>
                                       <div className="flex gap-4 font-medium">
                                         <span className="text-blue-600">
-                                          起始: {startField.value || 0}ms
+                                          起始: {startField.value ?? 0}ms
                                         </span>
                                         <span className="text-purple-600">
-                                          结束: {endField.value || "未设置"}ms
+                                          结束: {endField.value ?? 3000}ms
                                         </span>
                                       </div>
                                       <div className="text-gray-500">
-                                        <span>最大: 10000</span>
+                                        <span>最大: 30000</span>
                                       </div>
                                     </div>
                                   </div>
                                 </FormControl>
                                 <FormDescription>
-                                  拖动滑块设置时间戳范围，留空使用默认时间
+                                  拖动滑块设置时间戳范围（默认: 0-3000ms）
                                 </FormDescription>
                                 <FormMessage />
                               </FormItem>

@@ -37,9 +37,8 @@ export default function DashboardPage() {
   const sessionId = searchParams.get("session_id");
 
   // 使用简化后的WebSocket hook
-  const { isConnected, frameData, startSessionStream } = useWebSocket(
-    "ws://localhost:8000/ws/simulation"
-  );
+  const { isConnected, frameData, startSessionStream, lastMessage } =
+    useWebSocket("ws://localhost:8000/ws/simulation");
 
   // 效果1: 通过 HTTP API 获取会话数据（包括地图数据和会话信息）
   useEffect(() => {
@@ -72,8 +71,16 @@ export default function DashboardPage() {
         // 设置轨迹元数据
         if (sessionData.trajectory_metadata) {
           setTotalFrames(sessionData.trajectory_metadata.total_frames || 0);
+          // 设置总参与者数量（不是当前帧的车辆数）
+          setParticipantCount(
+            sessionData.trajectory_metadata.participant_count || 0
+          );
           toast.success(
-            `� 轨迹元数据加载成功 (${sessionData.trajectory_metadata.total_frames} 帧)`
+            `✅ 轨迹元数据加载成功 (${
+              sessionData.trajectory_metadata.total_frames
+            } 帧, ${
+              sessionData.trajectory_metadata.participant_count || 0
+            } 个参与者)`
           );
         }
 
@@ -106,35 +113,49 @@ export default function DashboardPage() {
   useEffect(() => {
     if (frameData) {
       setCurrentFrame(frameData.frame_number || 0);
-      setParticipantCount(frameData.vehicles?.length || 0);
+      // 注意：这里不更新participantCount，因为那是总参与者数
+      // 当前帧的车辆数可以通过 frameData.vehicles?.length 获取，但不应该覆盖总参与者数
     }
   }, [frameData]);
 
+  // 效果3: 监听WebSocket消息，同步流状态
+  useEffect(() => {
+    if (lastMessage) {
+      // 当流完成时，更新状态为 "stopped"
+      if (lastMessage.type === "session_stream_completed") {
+        setSimulationStatus("stopped");
+      }
+      // 当流开始时，确保状态为 "running"
+      if (lastMessage.type === "session_stream_started") {
+        setSimulationStatus("running");
+      }
+    }
+  }, [lastMessage]);
+
+  // ⚠️ 修复：统一开始播放逻辑，移除不支持的暂停/停止功能
   const handlePlayPause = () => {
     if (!sessionId) {
       toast.error("错误：缺少会话ID，无法开始播放");
       return;
     }
 
+    // 只有在空闲或停止状态才能开始新的流
     if (simulationStatus === "idle" || simulationStatus === "stopped") {
       toast.info("▶️ 开始播放...");
-      startSessionStream(sessionId, 10); // 以25 FPS开始流
+      startSessionStream(sessionId, 25); // 使用25 FPS（与后端默认一致）
       setSimulationStatus("running");
-    } else if (simulationStatus === "running") {
-      // 注意：当前的WebSocket实现不支持暂停/继续
-      // 这里只是一个UI状态切换的例子
-      toast("⏸️ 暂停（前端UI状态，流仍在继续）");
-      setSimulationStatus("paused");
-    } else if (simulationStatus === "paused") {
-      toast.info("▶️ 恢复（前端UI状态）");
-      setSimulationStatus("running");
+    } else {
+      // 如果已经在运行，提示用户流正在进行中
+      toast.info("⏸️ 数据流正在传输中，无法暂停（后端暂不支持暂停功能）");
     }
   };
 
+  // ⚠️ 修复：停止功能暂时禁用，因为后端不支持停止流
   const handleStop = () => {
-    toast.error("⏹️ 停止播放");
-    setSimulationStatus("stopped");
+    // 后端不支持停止流，只能重置前端状态
+    toast.warning("⏹️ 停止功能暂不可用（后端不支持停止流）");
     // 注意：这不会停止后端的流，只是重置前端状态
+    setSimulationStatus("stopped");
     setCurrentFrame(0);
   };
 
@@ -155,13 +176,8 @@ export default function DashboardPage() {
         onStop={handleStop}
         isConnected={isConnected}
         onStartStream={() => {
-          if (sessionId) {
-            toast.info("▶️ 开始播放...");
-            startSessionStream(sessionId, 25);
-            setSimulationStatus("running");
-          } else {
-            toast.error("错误：缺少会话ID，无法开始播放");
-          }
+          // ⚠️ 修复：统一使用 handlePlayPause 逻辑
+          handlePlayPause();
         }}
       />
       <SidebarInset>
