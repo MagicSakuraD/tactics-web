@@ -84,6 +84,7 @@ interface DatasetFile {
   preview_image: string | null;
   has_tracks: boolean;
   has_meta: boolean;
+  duration_ms?: number | null;
 }
 
 export default function DatasetConfigPage() {
@@ -107,14 +108,15 @@ export default function DatasetConfigPage() {
       dataset_path: "",
       map_path: "",
       perception_range: 30,
-      frame_step: 5,
+      frame_step: 1,
       stamp_start: 0,
-      stamp_end: 3000, // 默认结束时间 3000ms
+      stamp_end: 30000, // 默认结束时间 30000ms
     },
   });
 
   const selectedDataset = form.watch("dataset");
   const selectedFileId = form.watch("file_id");
+  const [maxStampMs, setMaxStampMs] = useState<number>(30000);
 
   // 加载文件列表
   useEffect(() => {
@@ -150,6 +152,15 @@ export default function DatasetConfigPage() {
         form.setValue("file_id", firstFile.file_id);
         form.setValue("dataset_path", firstFile.dataset_path);
         setSelectedPreviewImage(firstFile.preview_image);
+        const dur = firstFile.duration_ms ?? 30000;
+        const durMs = Math.max(1000, Math.floor(dur));
+        setMaxStampMs(durMs);
+        // 确保当前表单值在范围内
+        form.setValue("stamp_start", 0);
+        form.setValue(
+          "stamp_end",
+          Math.min(form.getValues("stamp_end") ?? 30000, durMs)
+        );
       }
     }
   }, [selectedDataset, datasetFiles, form]);
@@ -163,6 +174,16 @@ export default function DatasetConfigPage() {
       if (file) {
         setSelectedPreviewImage(file.preview_image);
         form.setValue("dataset_path", file.dataset_path);
+        const dur = file.duration_ms ?? 30000;
+        const durMs = Math.max(1000, Math.floor(dur));
+        setMaxStampMs(durMs);
+        // 把 stamp_end clamp 到合法范围
+        const curStart = form.getValues("stamp_start") ?? 0;
+        const curEnd = form.getValues("stamp_end") ?? durMs;
+        const nextStart = Math.max(0, Math.min(curStart, durMs));
+        const nextEnd = Math.max(nextStart, Math.min(curEnd, durMs));
+        form.setValue("stamp_start", nextStart);
+        form.setValue("stamp_end", nextEnd);
       }
     }
   }, [selectedFileId, selectedDataset, datasetFiles, form]);
@@ -187,7 +208,7 @@ export default function DatasetConfigPage() {
             map_path: data.map_path,
             // ⚠️ 确保时间戳范围始终发送（使用默认值如果未设置）
             stamp_start: data.stamp_start ?? 0,
-            stamp_end: data.stamp_end ?? 3000,
+            stamp_end: data.stamp_end ?? maxStampMs,
             perception_range: data.perception_range,
             frame_step: data.frame_step,
           }),
@@ -469,11 +490,11 @@ export default function DatasetConfigPage() {
                                   <div className="space-y-4">
                                     <Slider
                                       min={0}
-                                      max={30000}
+                                      max={maxStampMs}
                                       step={100}
                                       value={[
                                         startField.value ?? 0,
-                                        endField.value ?? 3000,
+                                        endField.value ?? maxStampMs,
                                       ]}
                                       onValueChange={(values) => {
                                         // ⚠️ 修复：0 是有效值，不应该转换为 undefined
@@ -492,17 +513,21 @@ export default function DatasetConfigPage() {
                                           起始: {startField.value ?? 0}ms
                                         </span>
                                         <span className="text-purple-600">
-                                          结束: {endField.value ?? 3000}ms
+                                          结束: {endField.value ?? maxStampMs}ms
                                         </span>
                                       </div>
                                       <div className="text-gray-500">
-                                        <span>最大: 30000</span>
+                                        <span>最大: {maxStampMs}ms</span>
                                       </div>
                                     </div>
                                   </div>
                                 </FormControl>
                                 <FormDescription>
-                                  拖动滑块设置时间戳范围（默认: 0-3000ms）
+                                  拖动滑块设置时间戳范围（最大值来自对应的
+                                  <code className="px-1">
+                                    *_recordingMeta.csv
+                                  </code>
+                                  的 <code className="px-1">duration</code>）
                                 </FormDescription>
                                 <FormMessage />
                               </FormItem>
@@ -562,7 +587,7 @@ export default function DatasetConfigPage() {
                                 placeholder="输入帧步长 (1-100)"
                                 {...field}
                                 onChange={(e) =>
-                                  field.onChange(parseInt(e.target.value) || 40)
+                                  field.onChange(parseInt(e.target.value) || 1)
                                 }
                               />
                             </FormControl>

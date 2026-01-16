@@ -68,6 +68,7 @@ export default function DashboardPage() {
           toast.success("🗺️ 地图数据加载成功");
         }
 
+
         // 设置轨迹元数据
         if (sessionData.trajectory_metadata) {
           setTotalFrames(sessionData.trajectory_metadata.total_frames || 0);
@@ -169,10 +170,7 @@ export default function DashboardPage() {
     >
       <AppSidebar
         simulationStatus={simulationStatus}
-        currentFrame={currentFrame}
-        totalFrames={totalFrames} // totalFrames可以从session_stream_started消息中获取
         participantCount={participantCount}
-        onPlayPause={handlePlayPause}
         onStop={handleStop}
         isConnected={isConnected}
         onStartStream={() => {
@@ -205,7 +203,10 @@ export default function DashboardPage() {
             <CardContent className="p-0">
               <div className="h-[700px] rounded-lg overflow-hidden">
                 {mapData ? (
-                  <Visualization mapData={mapData} frameData={frameData} />
+                  <Visualization
+                    mapData={mapData}
+                    frameData={frameData}
+                  />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center bg-muted">
                     <p className="text-muted-foreground">正在加载地图数据...</p>

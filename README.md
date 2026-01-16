@@ -2,9 +2,9 @@
 
 ## 项目简介
 
-Tactics2D-Web 是一个基于 **FastAPI + Next.js + Three.js** 的现代化交通仿真可视化平台。  
-它支持加载高精度地图（如 highD 数据集），解析轨迹数据，并通过 WebSocket 实时流式推送仿真帧，实现车辆在三维场景中的动态可视化。  
-适用于自动驾驶、交通流分析、轨迹回放等研究和教学场景。
+Tactics2D-Web 是一个基于 **FastAPI + Next.js + Three.js** 的交通轨迹可视化 Demo。  
+**当前阶段项目目标只有一个：用 Three.js 可视化 highD（LevelX）数据集。**  
+后端负责解析 OSM 地图与 highD 轨迹，并通过 WebSocket 流式推送帧数据；前端负责渲染与交互。
 
 ---
 
@@ -39,10 +39,50 @@ Tactics2D-Web 是一个基于 **FastAPI + Next.js + Three.js** 的现代化交�
 - **主题系统**：next-themes 0.4+（支持明暗主题切换）
 - **通知系统**：Sonner 2.0+（优雅的 Toast 通知）
 
-### 数据支持
+### 数据支持（当前范围）
 
 - **地图格式**：OSM（OpenStreetMap）格式
-- **轨迹数据集**：highD, inD, rounD, exiD, uniD（通过 Tactics2D 库支持）
+- **轨迹数据集**：**仅 highD（LevelX）**（其它 LevelX：inD/rounD/exiD/uniD 暂不作为目标，README 不再承诺可用）
+
+---
+
+## 我需要用到哪些 Tactics2D Python API？
+
+本项目为了实现 “highD 可视化”，在后端**只需要用到很少的 Tactics2D API**。你可以把 Tactics2D 当成“数据解析器”，不需要引入控制器/仿真环境等复杂模块。
+
+### 必须用到（本项目核心依赖）
+
+- **`tactics2d.dataset_parser.LevelXParser`**：读取 highD 的轨迹数据
+
+  - 我们用到的方法：`parse_trajectory(file, folder, stamp_range=None, ids=None)`
+  - 说明：它会根据 `file` 自动读取 `%02d_tracks.csv` 和 `%02d_tracksMeta.csv`。
+  - 官方文档：[`LevelXParser` API](https://tactics2d.readthedocs.io/en/latest/api/dataset_parser/#tactics2d.dataset_parser.LevelXParser)
+
+- **`tactics2d.map.parser.OSMParser`**：读取 OSM 地图（供前端画道路/车道线）
+  - 目前在 `backend/app/services/map_service.py` 中使用（通过 `parser.parse(...)` 解析 XML）。
+
+### 可能会用到（可选）
+
+- **`LevelXParser.get_stamp_range(file, folder)`**：获取数据文件的时间范围（ms）
+
+  - 当前我们主要依赖 `parse_trajectory` 返回的 `actual_stamp_range`，但你也可以用它做 UI 默认值/预检查。
+
+- **`LevelXParser.get_location(file, folder)`**：读取 `%02d_recordingMeta.csv` 的 locationId
+  - 目前业务逻辑未使用，仅在你需要“按场景/地点做过滤或展示”时才值得接入。
+
+### 你用不到（可以忽略）
+
+- **`tactics2d.controller.*`**：控制器相关（例如轨迹跟踪、控制策略）
+
+  - 本项目当前不做闭环控制/车辆动力学控制，因此不需要。
+  - 文档入口：[`tactics2d.controller` API](https://tactics2d.readthedocs.io/en/latest/api/controller/)
+
+- **`tactics2d.envs.*` / `tactics2d.physics.*` / `tactics2d.sensor.*` / `tactics2d.traffic.*`**：仿真环境/物理/传感器/交通规则
+
+  - 本项目目标是“回放并渲染 highD 数据”，不是构建完整仿真器，因此可以全部不碰。
+
+- **`tactics2d.geometry.*` / `tactics2d.interpolator.*` / `tactics2d.participant.*`**：高级几何/插值/参与者模型
+  - 这些会被 `LevelXParser` 和 `OSMParser` 在内部间接使用，但我们不需要在业务层直接调用它们。
 
 ---
 
@@ -98,23 +138,23 @@ Tactics2D-Web 是一个基于 **FastAPI + Next.js + Three.js** 的现代化交�
 
 ## 主要功能
 
-### 核心功能
+### 核心功能（当前范围）
 
 - ✅ **地图解析与可视化**：支持 OSM 格式地图文件解析，自动提取道路、车道、边界等要素
-- ✅ **轨迹数据解析**：支持多种数据集格式（highD/inD/rounD/exiD/uniD），自动解析车辆轨迹
+- ✅ **轨迹数据解析**：解析 **highD（LevelX）** 轨迹数据并流式推送
 - ✅ **仿真会话管理**：基于 UUID 的会话系统，支持多用户并发访问
 - ✅ **WebSocket 实时推送**：低延迟的帧数据流式传输，支持可配置帧率（FPS）
 - ✅ **Three.js 3D 渲染**：
-  - 动态车辆渲染（根据速度着色）
-  - 道路和车道线可视化
-  - 可交互的相机控制（OrbitControls）
+  - 动态车辆渲染（**Car 为红色系，Truck 为蓝色系**；并根据速度有深浅变化）
+  - 道路/车道线可视化（纯几何 mesh：路面为平面，标线为细长方块段 `InstancedMesh`）
+  - 可交互的相机控制（OrbitControls：默认俯视，旋转锁定，仅平移 + 缩放）
   - 响应式场景适配
 - ✅ **参数配置**：
   - 帧步长（frame_step）控制
   - 时间范围筛选（stamp_start, stamp_end）
   - 最大仿真时长限制
   - 参与者筛选（可扩展）
-- ✅ **播放控制**：播放/暂停、帧率调节（可扩展：快进/慢放/跳转）
+- ✅ **播放控制**：当前仅支持“开始一次流式播放”（暂停/停止/重播属于后续扩展）
 
 ### 用户体验特性
 
@@ -294,7 +334,7 @@ http://localhost:3000/dashboard?session_id=<会话ID>
 
 在仪表盘页面：
 
-- **3D 场景**：使用鼠标拖拽旋转视角，滚轮缩放
+- **3D 场景**：默认俯视（top-down）。鼠标拖拽为**平移**，滚轮缩放；当前版本锁定旋转（避免视角混乱）
 - **侧边栏控制**：
   - 播放/暂停按钮
   - 帧率（FPS）滑块
@@ -310,8 +350,8 @@ http://localhost:3000/dashboard?session_id=<会话ID>
 - **消息格式**：JSON
 - **主要消息类型**：
   - `start_session_stream`：开始流式传输
-  - `frame_data`：帧数据
-  - `session_stream_complete`：流传输完成
+  - `simulation_frame`：帧数据（`frame_number` 在消息顶层，`data` 内含 `{ timestamp, vehicles }`）
+  - `session_stream_completed`：流传输完成
   - `error`：错误信息
 
 ---
@@ -384,19 +424,22 @@ const ws = new WebSocket("ws://localhost:8000/ws/simulation");
 
 ```json
 {
-  "type": "frame_data",
+  "type": "simulation_frame",
   "session_id": "sid_abc12345",
-  "frame_index": 0,
-  "vehicles": [
-    {
-      "id": 1,
-      "x": 100.5,
-      "y": 2.3,
-      "vx": 15.2,
-      "vy": 0.1,
-      "heading": 0.5
-    }
-  ]
+  "frame_number": 0,
+  "data": {
+    "timestamp": 0,
+    "vehicles": [
+      {
+        "id": 1,
+        "x": 100.5,
+        "y": 2.3,
+        "vx": 15.2,
+        "vy": 0.1,
+        "heading": 0.5
+      }
+    ]
+  }
 }
 ```
 
@@ -445,6 +488,9 @@ A:
 - 查看 `frontend/tactics-app/app/dashboard/components/visualization.tsx` 中的渲染逻辑
 - 可能需要调整车辆尺寸或地图缩放参数
 
+**Q: 车辆与道路出现固定偏移（offset）？**  
+A: 当前版本可能存在地图（OSM）与 highD 轨迹（米制）原点不一致的问题。为保证画面稳定，前端会在**首次收到车辆数据**时计算一次偏移量并将其应用到车辆坐标上（使车辆“贴回”道路）。这属于临时策略，长期应在后端统一坐标系并输出一致的局部坐标。
+
 **Q: Three.js 场景不显示？**  
 A:
 
@@ -471,10 +517,10 @@ A:
 - [ ] 支持参与者筛选（按 ID、类型等）
 - [ ] 优化大数据集的内存占用
 
-### 中期计划
+### 中期计划（仅围绕 highD 可视化）
 
 - [ ] 支持导出仿真视频（MP4）
-- [ ] 支持多种数据集格式自动识别
+- [ ] （可选）接入 `*_tracksMeta.csv` 的 `class` 字段，修复 Truck/Car 类型统计与渲染
 - [ ] 支持自定义车辆模型和地图样式
 - [ ] 添加性能监控和统计面板
 
@@ -661,4 +707,6 @@ npx shadcn@latest add [component-name]
 
 **最后更新**：2026 年
 
-⚠️ 已知问题：当前版本在解析 `backend/data/LevelX/highD/data` 目录下的 highD CSV（类型字段映射）仍有缺陷，导致车辆类型统计可能全部显示为 Car。修复中，请关注后续更新。
+⚠️ 已知问题：当前版本在解析 `backend/data/LevelX/highD/data` 的 highD 数据时，**车辆类型（Truck/Car）可能无法从 tactics2d Participant 直接获得**，导致统计/渲染可能全部显示为 Car。后续计划通过直接读取 `*_tracksMeta.csv` 的 `class` 字段做 id→ 类型映射来修复。
+
+⚠️ 已知问题：地图与轨迹坐标系对齐目前仍是“经验型”方案（前端对车辆应用一次性 offset）。如果你希望**严格物理对齐**（每个 file_id 都正确对齐、没有人为平移），需要在后端实现稳定的坐标投影/原点定义，并把该原点同时应用到 OSM 与轨迹数据上。

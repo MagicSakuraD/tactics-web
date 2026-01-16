@@ -1,18 +1,14 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import {
   Car,
   Play,
-  Pause,
   Square,
   BarChart3,
-  Settings,
-  MapPin,
   Home,
-  Database,
   Monitor,
-  FileText,
   ChevronRight,
 } from "lucide-react";
 
@@ -66,6 +62,7 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   currentFrame?: number;
   totalFrames?: number;
   participantCount?: number;
+  // 兼容旧调用方：后端暂不支持暂停，AppSidebar 内不会再使用该回调
   onPlayPause?: () => void;
   onStop?: () => void;
   isConnected?: boolean;
@@ -74,10 +71,11 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
 
 export function AppSidebar({
   simulationStatus = "idle",
-  currentFrame = 0,
-  totalFrames = 0,
+  // 这些 props 可能仍会从父组件传入，但不应该透传到底层 Sidebar DOM
+  currentFrame: _currentFrame, // eslint-disable-line @typescript-eslint/no-unused-vars
+  totalFrames: _totalFrames, // eslint-disable-line @typescript-eslint/no-unused-vars
+  onPlayPause: _onPlayPause, // eslint-disable-line @typescript-eslint/no-unused-vars
   participantCount = 0,
-  onPlayPause,
   onStop,
   isConnected = false,
   onStartStream,
@@ -91,7 +89,7 @@ export function AppSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <a href="/">
+              <Link href="/">
                 <div className="bg-blue-600 text-white flex aspect-square size-8 items-center justify-center rounded-lg">
                   <Car className="size-4" />
                 </div>
@@ -99,7 +97,7 @@ export function AppSidebar({
                   <span className="truncate font-semibold">Tactics2D</span>
                   <span className="truncate text-xs">轨迹可视化</span>
                 </div>
-              </a>
+              </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -148,13 +146,12 @@ export function AppSidebar({
                               <div className="flex space-x-2">
                                 <Button
                                   onClick={() => {
-                                    // 智能处理：根据状态决定是开始流还是播放/暂停
-                                    if (simulationStatus === "idle") {
-                                      // 如果是空闲状态，启动流并开始播放
+                                    // ✅ 后端暂不支持暂停/继续：只允许在 idle/stopped 时启动流
+                                    if (
+                                      simulationStatus === "idle" ||
+                                      simulationStatus === "stopped"
+                                    ) {
                                       onStartStream?.();
-                                    } else {
-                                      // 如果已经有流，只控制播放/暂停
-                                      onPlayPause?.();
                                     }
                                   }}
                                   disabled={!isConnected}
@@ -166,25 +163,16 @@ export function AppSidebar({
                                   size="sm"
                                   className="flex-1"
                                 >
-                                  {simulationStatus === "idle" ? (
+                                  {simulationStatus === "idle" ||
+                                  simulationStatus === "stopped" ? (
                                     <>
                                       <Play className="h-3 w-3 mr-1" />
                                       开始
                                     </>
-                                  ) : simulationStatus === "running" ? (
-                                    <>
-                                      <Pause className="h-3 w-3 mr-1" />
-                                      暂停
-                                    </>
-                                  ) : simulationStatus === "paused" ? (
-                                    <>
-                                      <Play className="h-3 w-3 mr-1" />
-                                      继续
-                                    </>
                                   ) : (
                                     <>
                                       <Play className="h-3 w-3 mr-1" />
-                                      重新开始
+                                      运行中
                                     </>
                                   )}
                                 </Button>
@@ -192,19 +180,18 @@ export function AppSidebar({
                                   onClick={onStop}
                                   variant="outline"
                                   size="sm"
-                                  disabled={simulationStatus === "idle"}
+                                  disabled={
+                                    simulationStatus === "idle" ||
+                                    simulationStatus === "stopped"
+                                  }
                                 >
                                   <Square className="h-3 w-3" />
                                 </Button>
                               </div>
                               <div className="text-xs text-muted-foreground text-center">
-                                {simulationStatus === "idle"
-                                  ? "待机"
-                                  : simulationStatus === "running"
+                                {simulationStatus === "running"
                                   ? "运行中"
-                                  : simulationStatus === "paused"
-                                  ? "已暂停"
-                                  : "已停止"}
+                                  : "待机"}
                               </div>
                             </CardContent>
                           </Card>
@@ -263,10 +250,10 @@ export function AppSidebar({
                       isActive={item.isActive}
                       tooltip={item.title}
                     >
-                      <a href={item.url}>
+                      <Link href={item.url}>
                         <item.icon />
                         <span>{item.title}</span>
-                      </a>
+                      </Link>
                     </SidebarMenuButton>
                   )}
                 </SidebarMenuItem>

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 interface WebSocketMessage {
   type: string;
   session_id?: string;
-  data?: any;
+  data?: unknown;
   timestamp?: number;
   status?: string;
   message?: string;
@@ -16,12 +16,19 @@ interface WebSocketMessage {
   frame_number?: number;
 }
 
+export interface SimulationFrameData {
+  session_id?: string;
+  frame_number?: number;
+  timestamp?: number;
+  vehicles?: unknown;
+  [key: string]: unknown;
+}
+
 interface UseWebSocketReturn {
   isConnected: boolean;
   lastMessage: WebSocketMessage | null;
-  frameData: any | null; // 简化为any，因为数据结构在后端已确定
-  mapData: any | null; // 简化为any
-  sendMessage: (message: any) => void;
+  frameData: SimulationFrameData | null;
+  sendMessage: (message: unknown) => void;
   startSessionStream: (sessionId: string, fps?: number) => void;
 }
 
@@ -30,8 +37,7 @@ export const useWebSocket = (
 ): UseWebSocketReturn => {
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
-  const [frameData, setFrameData] = useState<any | null>(null);
-  const [mapData, setMapData] = useState<any | null>(null); // 地图数据不再通过WS获取
+  const [frameData, setFrameData] = useState<SimulationFrameData | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const connect = useCallback(() => {
@@ -57,8 +63,13 @@ export const useWebSocket = (
           // 核心消息处理逻辑
           switch (message.type) {
             case "simulation_frame":
-              // 直接设置帧数据，用于驱动Three.js更新
-              setFrameData(message.data);
+              // ✅ 后端的 frame_number 在消息外层；data 里只有 { timestamp, vehicles }
+              // 为了让 Dashboard 能显示帧号，这里把 frame_number 合并进 frameData
+              setFrameData({
+                ...((message.data as Record<string, unknown>) ?? {}),
+                frame_number: message.frame_number,
+                session_id: message.session_id,
+              });
               break;
             case "connected":
               toast.success(`✅ WebSocket 已连接 (ID: ${message.client_id})`);
@@ -115,7 +126,7 @@ export const useWebSocket = (
     }
   }, []);
 
-  const sendMessage = useCallback((message: any) => {
+  const sendMessage = useCallback((message: unknown) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     } else {
@@ -125,7 +136,7 @@ export const useWebSocket = (
 
   // 唯一需要的主动发送函数：开始会话流
   const startSessionStream = useCallback(
-    (sessionId: string, fps: number = 10) => {
+    (sessionId: string, fps: number = 25) => {
       // 在发送开始指令前，确保连接是打开的
       const waitForConnection = (
         callback: () => void,
@@ -178,7 +189,6 @@ export const useWebSocket = (
     isConnected,
     lastMessage,
     frameData,
-    mapData, // 虽然不再通过WS更新，但保留状态以供其他组件使用
     sendMessage, // 保留以备调试之用
     startSessionStream, // 暴露给UI组件调用
   };

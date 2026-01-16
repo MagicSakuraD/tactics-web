@@ -162,6 +162,7 @@ class DatasetFileInfo(BaseModel):
     preview_image: Optional[str] = Field(None, description="预览图URL路径")
     has_tracks: bool = Field(False, description="是否有轨迹文件")
     has_meta: bool = Field(False, description="是否有元数据文件")
+    duration_ms: Optional[int] = Field(None, description="recordingMeta.duration 转换为毫秒（如果存在）")
 
 class DataFilesResponse(BaseModel):
     """数据文件列表响应"""

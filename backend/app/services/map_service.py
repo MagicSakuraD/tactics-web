@@ -99,26 +99,46 @@ class MapService:
             max_x = max(x_values) if x_values else 1.0
             max_y = max(y_values) if y_values else 1.0
             max_coord = max(max_x, max_y)
-            
-            # 判断坐标单位
-            if max_coord < 0.01:
-                # 很可能是经纬度（度数），需要大幅缩放
-                # 粗略估算：1度纬度 ≈ 111km，所以需要放大到米级别
-                # 但考虑到Three.js场景，我们使用一个合理的缩放
-                scale = 111000  # 将度转换为米（近似）
-                logger.info(f"检测到经纬度坐标（最大值={max_coord:.6f}），使用缩放比例: {scale}")
-            elif max_coord < 1.0:
-                # 可能是归一化的坐标或很小的米值
-                scale = 1000  # 放大1000倍
-                logger.info(f"检测到小数值坐标（最大值={max_coord:.3f}），使用缩放比例: {scale}")
-            elif max_coord < 100.0:
-                # 可能是米为单位，但数值较小
-                scale = 1.0  # 不缩放
-                logger.info(f"检测到米单位坐标（最大值={max_coord:.2f}），不进行缩放")
+
+            # === 收敛策略（面向 highD 可视化）：只区分“看起来像经纬度” vs “看起来像米” ===
+            # 旧逻辑会把经纬度（例如 lon≈6.x, lat≈50.x）误判为“米”，导致地图尺度错误，进而出现“只有路没车/比例崩坏”。
+            #
+            # 判定方式：
+            # - 如果坐标绝对值很小（<0.01）基本确定是度
+            # - 否则再看“相邻点的典型距离”：度坐标的点间距通常在 1e-5 ~ 1e-3 级别；米坐标常见 >= 1e-2
+            def _median(vals: List[float]) -> float:
+                if not vals:
+                    return 0.0
+                s = sorted(vals)
+                mid = len(s) // 2
+                return (s[mid] if len(s) % 2 == 1 else (s[mid - 1] + s[mid]) / 2.0)
+
+            deltas = []
+            prev = None
+            for c in sample_coords[:100]:
+                try:
+                    x, y = float(c[0]), float(c[1])
+                except Exception:
+                    continue
+                if prev is not None:
+                    dx = x - prev[0]
+                    dy = y - prev[1]
+                    deltas.append(math.sqrt(dx * dx + dy * dy))
+                prev = (x, y)
+            median_delta = _median([abs(d) for d in deltas if d is not None])
+
+            looks_like_degrees = (max_coord < 0.01) or (max_coord <= 180.0 and median_delta > 0 and median_delta < 0.001)
+
+            if looks_like_degrees:
+                scale = 111000  # 近似：1度纬度≈111km，将度转换为米
+                logger.info(
+                    f"检测到经纬度/度坐标（max={max_coord:.6f}, median_delta={median_delta:.6g}），使用缩放比例: {scale}"
+                )
             else:
-                # 已经是较大的数值，可能是厘米或其他单位
-                scale = 0.01  # 缩小100倍（假设是厘米）
-                logger.info(f"检测到大数值坐标（最大值={max_coord:.2f}），使用缩放比例: {scale}")
+                scale = 1.0
+                logger.info(
+                    f"检测到米制/本地坐标（max={max_coord:.2f}, median_delta={median_delta:.6g}），不进行缩放"
+                )
             
             return scale
         except Exception as e:
@@ -262,10 +282,25 @@ class MapService:
         
         # 3. 确定坐标缩放比例（基于样本坐标）
         coordinate_scale = self._determine_coordinate_scale(sample_coords)
+        # ✅ 如果是经纬度（度→米），必须先减去一个原点（否则会带着 lon/lat 的巨大基值，Three.js 很难显示/对齐车辆）
+        origin_xy: Optional[Tuple[float, float]] = None
+        if coordinate_scale == 111000 and sample_coords:
+            try:
+                ox = float(sample_coords[0][0])
+                oy = float(sample_coords[0][1])
+                origin_xy = (ox, oy)
+            except Exception:
+                origin_xy = None
         
         # 4. 应用缩放并转换为Three.js格式 [x, y, z]
         def apply_coordinate_transform(coords_list):
             """将坐标列表转换为Three.js格式并应用缩放"""
+            if origin_xy and coordinate_scale == 111000:
+                ox, oy = origin_xy
+                return [
+                    [(float(x) - ox) * coordinate_scale, 0.0, (float(y) - oy) * coordinate_scale]
+                    for x, y in coords_list
+                ]
             return [
                 [float(x) * coordinate_scale, 0.0, float(y) * coordinate_scale] 
                 for x, y in coords_list
@@ -289,7 +324,8 @@ class MapService:
             'parser_type': 'official_osmparser_enhanced',
             'has_geometry': len(lanes) > 0 or len(boundaries) > 0 or len(roads) > 0,
             'coordinate_scale': coordinate_scale,
-            'coordinate_unit': 'meters' if coordinate_scale <= 1.0 else 'degrees_to_meters'
+            'coordinate_unit': 'meters' if coordinate_scale <= 1.0 else 'degrees_to_meters',
+            'coordinate_origin': origin_xy
         }
         
         return {

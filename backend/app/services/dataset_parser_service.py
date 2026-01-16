@@ -5,6 +5,8 @@ import logging
 import math
 from typing import Dict, Any, List, Tuple, Optional
 from collections import defaultdict
+import csv
+from pathlib import Path
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -55,14 +57,24 @@ class DatasetParserService:
             logger.warning(f"⚠️ 无法检测参与者API，跳过详细统计: {e}")
             return
         
+        # 尝试从 highD 的 tracksMeta.csv 读取类型映射（比依赖 Participant.class/type 更可靠）
+        meta_type_by_id: Dict[int, str] = {}
+        try:
+            # participant 的 trajectory 里不会带 file_id/dataset_path，因此这里只能在调用方传入；
+            # 这里保持兼容：如果外部未设置，将依赖 Participant 的字段兜底
+            meta_type_by_id = getattr(self, "_last_highd_meta_type_by_id", {}) or {}
+        except Exception:
+            meta_type_by_id = {}
+
         # 遍历所有参与者进行统计
         for p_id, p_obj in participants.items():
             try:
                 # 获取类型
                 # 注意：tracksMeta.csv 的字段名是 'class'，不是 'type'
+                vehicle_type = meta_type_by_id.get(int(p_id))
                 vehicle_type_class = participant_attr_getter(p_obj, 'class')
                 vehicle_type_type = participant_attr_getter(p_obj, 'type')
-                vehicle_type = vehicle_type_class or vehicle_type_type
+                vehicle_type = vehicle_type or vehicle_type_class or vehicle_type_type
                 
                 # 调试日志：记录前几个参与者的类型获取情况（包括Truck）
                 if p_id <= 5 or (vehicle_type_class and vehicle_type_class != 'Car'):
@@ -94,27 +106,27 @@ class DatasetParserService:
                 type_details[vehicle_type]['ids'].append(int(p_id))
                 
                 # 获取尺寸
-                # ⚠️ 重要：HighD数据集的字段命名反直觉！
-                # - width 列 → 实际是车辆长度（沿X轴，4.85米）
-                # - height 列 → 实际是车辆宽度（沿Y轴，2.12米）
-                raw_val_1 = participant_attr_getter(p_obj, 'width')   # CSV的width，实际是车长
-                raw_val_2 = participant_attr_getter(p_obj, 'height')  # CSV的height，实际是车宽
-                
-                # 智能修正：通过数值大小判断哪个是长度哪个是宽度
-                val_a = float(raw_val_1) if raw_val_1 else 0
-                val_b = float(raw_val_2) if raw_val_2 else 0
-                
-                if val_a > val_b:
-                    vehicle_length = val_a  # 大的是长度
-                    vehicle_width = val_b   # 小的是宽度
-                else:
-                    vehicle_length = val_b
-                    vehicle_width = val_a
-                
-                # 兜底默认值
-                if not vehicle_length or vehicle_length < 1.0:
+                # ✅ 以 tactics2d Participant 的规范字段为准：length/width（highD 原始 CSV 的命名反直觉，但 tactics2d 已做归一）
+                vehicle_length = participant_attr_getter(p_obj, 'length')
+                vehicle_width = participant_attr_getter(p_obj, 'width')
+
+                # 兜底：如果某些数据集/版本没有 length/width，则尝试从 width/height 推断（长 > 宽）
+                if (vehicle_length is None or vehicle_width is None) and hasattr(p_obj, 'height'):
+                    raw_a = getattr(p_obj, 'width', None)
+                    raw_b = getattr(p_obj, 'height', None)
+                    try:
+                        val_a = float(raw_a) if raw_a is not None else 0.0
+                        val_b = float(raw_b) if raw_b is not None else 0.0
+                        if val_a > 0 and val_b > 0:
+                            vehicle_length = max(val_a, val_b)
+                            vehicle_width = min(val_a, val_b)
+                    except Exception:
+                        pass
+
+                # 最终兜底默认值
+                if not vehicle_length or float(vehicle_length) < 1.0:
                     vehicle_length = 4.5  # 默认轿车长度
-                if not vehicle_width or vehicle_width < 0.5:
+                if not vehicle_width or float(vehicle_width) < 0.5:
                     vehicle_width = 2.0  # 默认轿车宽度
                 
                 vehicle_height_attr = None  # tracksMeta.csv 没有真正的"高度"字段
@@ -191,10 +203,14 @@ class DatasetParserService:
             - participant_attr_getter: 从participant对象获取静态属性的函数
         """
         # 检测获取状态的方法
+        # ⚠️ 重要：不能直接返回 sample_participant.get_state...（它是“绑定方法”）
+        # 否则在循环里会错误地对所有参与者都读取同一个 sample_participant 的状态，导致“没有车/车都重叠”等严重问题。
         if hasattr(sample_participant, 'get_state_at_timestamp'):
-            get_state_method = sample_participant.get_state_at_timestamp
+            def get_state_method(participant, timestamp):
+                return participant.get_state_at_timestamp(timestamp)
         elif hasattr(sample_participant, 'get_state'):
-            get_state_method = sample_participant.get_state
+            def get_state_method(participant, timestamp):
+                return participant.get_state(timestamp)
         else:
             raise AttributeError("Participant对象缺少get_state方法")
         
@@ -212,7 +228,7 @@ class DatasetParserService:
                 traj = sample_participant.trajectory
                 if hasattr(traj, 'stamps') and traj.stamps:
                     sample_timestamp = traj.stamps[0]
-                    sample_state = get_state_method(sample_timestamp)
+                    sample_state = get_state_method(sample_participant, sample_timestamp)
                     if sample_state is None:
                         detection_error = "get_state_method返回None"
                 else:
@@ -264,7 +280,7 @@ class DatasetParserService:
             # 注意：tracksMeta.csv 的字段名是 'class'，不是 'type'
             possible_names = {
                 'width': ['width', 'w', 'vehicle_width'],
-                'height': ['height', 'h', 'vehicle_height', 'length'],  # 注意：highD的height实际是长度
+                'height': ['height', 'h', 'vehicle_height', 'length'],  # 注意：highD的height实际是车宽（与“长度/宽度”命名容易混淆）
                 'length': ['length', 'l', 'vehicle_length'],
                 # type & class 字段常见的重命名：type_, class_
                 'type': ['type', 'type_', 'class', 'class_', 'vehicle_type', 'vehicle_class'],  # type 可以尝试 class
@@ -329,6 +345,41 @@ class DatasetParserService:
         
         return get_state_method, attr_getter, participant_attr_getter
 
+    def _load_highd_tracks_meta_type_map(self, dataset_path: str, file_id: int) -> Dict[int, str]:
+        """
+        直接读取 highD 的 %02d_tracksMeta.csv，提取 id→class(Car/Truck) 映射。
+        这是目前最可靠的车辆类型来源（tactics2d Participant 往往不暴露 class/type）。
+        """
+        try:
+            meta_path = Path(dataset_path) / f"{int(file_id):02d}_tracksMeta.csv"
+            if not meta_path.exists():
+                logger.warning(f"⚠️ tracksMeta.csv 不存在，无法建立类型映射: {meta_path}")
+                return {}
+
+            type_by_id: Dict[int, str] = {}
+            with meta_path.open("r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        rid = int(row.get("id", "").strip())
+                    except Exception:
+                        continue
+                    cls = (row.get("class") or "").strip()
+                    if cls in ("Car", "Truck"):
+                        type_by_id[rid] = cls
+
+            if type_by_id:
+                # 给统计/重构阶段复用（避免改大量函数签名）
+                self._last_highd_meta_type_by_id = type_by_id
+                logger.info(f"✅ 从 tracksMeta.csv 建立类型映射: {len(type_by_id)} 条")
+            else:
+                logger.warning("⚠️ tracksMeta.csv 中未解析出任何有效 class 字段（Car/Truck）")
+
+            return type_by_id
+        except Exception as e:
+            logger.warning(f"⚠️ 读取 tracksMeta.csv 建立类型映射失败: {e}")
+            return {}
+
     def _restructure_for_streaming(
         self, 
         participants: Dict[int, Any], 
@@ -377,7 +428,7 @@ class DatasetParserService:
         try:
             sample_participant = next(iter(participants.values()))
             get_state_method, state_attr_getter, participant_attr_getter = self._detect_participant_api(sample_participant)
-            logger.debug(f"✅ API检测完成: get_state方法={get_state_method.__name__}")
+            logger.debug("✅ API检测完成: get_state方法=per-participant wrapper")
         except Exception as e:
             logger.error(f"❌ API检测失败: {e}")
             return {}
@@ -387,6 +438,13 @@ class DatasetParserService:
         
         # 直接按effective_step跳跃循环，只计算需要的帧
         # Python 3.7+ 字典保持插入顺序，无需额外排序
+        # 尝试从 highD 的 tracksMeta.csv 读取类型映射（如果上层已加载）
+        meta_type_by_id: Dict[int, str] = {}
+        try:
+            meta_type_by_id = getattr(self, "_last_highd_meta_type_by_id", {}) or {}
+        except Exception:
+            meta_type_by_id = {}
+
         for timestamp in range(int(start_time), int(end_time), effective_step):
             frame_participants = []
             
@@ -397,30 +455,17 @@ class DatasetParserService:
                         continue
                     
                     # 获取状态（已确认方法存在）
-                    state = get_state_method(timestamp)
+                    state = get_state_method(p_obj, timestamp)
                     if state is None:
                         continue
                     
                     # 提取静态属性（尺寸和类型）- 这些属性不会随时间变化
-                    # ⚠️ 重要：HighD数据集的字段命名非常反直觉！
-                    # HighD坐标系定义：
-                    # - X轴：沿道路延伸方向（Longitudinal）→ 车长方向
-                    # - Y轴：垂直于道路方向（Lateral）→ 车宽方向
-                    # 
-                    # 因此：
-                    # - tracks.csv 和 tracksMeta.csv 的 `width` 列 → 实际是车辆长度（沿X轴）
-                    # - tracks.csv 和 tracksMeta.csv 的 `height` 列 → 实际是车辆宽度（沿Y轴）
-                    # 
-                    # 示例：车辆1的数据
-                    # - width = 4.85 → 这是车长（4.85米，符合轿车长度）
-                    # - height = 2.12 → 这是车宽（2.12米，符合轿车宽度）
+                    # ✅ 以 tactics2d Participant 的规范字段为准：length/width
+                    # 说明：highD 原始 CSV 的 width/height 命名确实“反直觉”，但 tactics2d 已归一为 length/width。
                     
-                    # 1. 获取原始值（不管属性名，先拿数值）
-                    raw_val_1 = participant_attr_getter(p_obj, 'width')   # CSV的width，实际是车长
-                    raw_val_2 = participant_attr_getter(p_obj, 'height')  # CSV的height，实际是车宽
-                    
-                    # 获取车辆类型：tracksMeta.csv 的字段名是 'class'，不是 'type'
-                    vehicle_type = participant_attr_getter(p_obj, 'class') or participant_attr_getter(p_obj, 'type')
+                    # 获取车辆类型：优先使用 tracksMeta.csv 的 class 映射，其次尝试 Participant 字段
+                    vehicle_type = meta_type_by_id.get(int(p_id))
+                    vehicle_type = vehicle_type or participant_attr_getter(p_obj, 'class') or participant_attr_getter(p_obj, 'type')
                     if not vehicle_type:
                         vehicle_type = 'Car'  # 默认值
                     else:
@@ -429,18 +474,21 @@ class DatasetParserService:
                         if vehicle_type not in ['Car', 'Truck']:
                             vehicle_type = 'Car'  # 如果类型异常，使用默认值
                     
-                    # 2. 智能修正：通过数值大小判断哪个是长度哪个是宽度
-                    # 逻辑：对于车辆来说，长 > 宽 几乎是绝对真理
-                    val_a = float(raw_val_1) if raw_val_1 else 0
-                    val_b = float(raw_val_2) if raw_val_2 else 0
-                    
-                    if val_a > val_b:
-                        vehicle_length = val_a  # 大的是长度（通常是width列的值，如4.85）
-                        vehicle_width = val_b   # 小的是宽度（通常是height列的值，如2.12）
-                    else:
-                        # 如果数据异常（宽>长），按原值处理
-                        vehicle_length = val_b
-                        vehicle_width = val_a
+                    vehicle_length = participant_attr_getter(p_obj, 'length')
+                    vehicle_width = participant_attr_getter(p_obj, 'width')
+
+                    # 兜底：如果缺失 length/width，尝试用 width/height 推断（长 > 宽）
+                    if (vehicle_length is None or vehicle_width is None) and hasattr(p_obj, 'height'):
+                        raw_a = getattr(p_obj, 'width', None)
+                        raw_b = getattr(p_obj, 'height', None)
+                        try:
+                            val_a = float(raw_a) if raw_a is not None else 0.0
+                            val_b = float(raw_b) if raw_b is not None else 0.0
+                            if val_a > 0 and val_b > 0:
+                                vehicle_length = max(val_a, val_b)
+                                vehicle_width = min(val_a, val_b)
+                        except Exception:
+                            pass
                     
                     # 3. 兜底默认值（防止异常数据）
                     if not vehicle_length or vehicle_length < 1.0:
@@ -460,10 +508,9 @@ class DatasetParserService:
                         if distance > perception_range:
                             continue  # 跳过超出感知范围的车辆
                     
-                    # 应用坐标缩放，与地图坐标系统匹配
-                    # 地图坐标经过了coordinate_scale缩放（如111000），车辆坐标也需要应用相同的缩放
-                    x_scaled = x_raw * coordinate_scale
-                    y_scaled = y_raw * coordinate_scale
+                    # ✅ 车辆轨迹在 highD 中本身就是米制坐标；不要再乘 coordinate_scale（该参数用于地图度→米的缩放）
+                    x_scaled = x_raw
+                    y_scaled = y_raw
                     
                     # 直接使用预检测的属性访问器（避免getattr开销）
                     frame_participants.append({
@@ -473,10 +520,9 @@ class DatasetParserService:
                         "vx": round(float(state_attr_getter(state, 'vx')), 3),  # 速度通常不需要缩放
                         "vy": round(float(state_attr_getter(state, 'vy')), 3),  # 速度通常不需要缩放
                         "heading": round(float(state_attr_getter(state, 'heading')), 3),
-                        # 新增：车辆尺寸和类型信息
-                        # 注意：尺寸也需要缩放，以匹配地图坐标系
-                        "length": round(float(vehicle_length) * coordinate_scale, 2) if vehicle_length else 4.5 * coordinate_scale,
-                        "width": round(float(vehicle_width) * coordinate_scale, 2) if vehicle_width else 2.0 * coordinate_scale,
+                        # 新增：车辆尺寸和类型信息（highD：单位米）
+                        "length": round(float(vehicle_length), 2) if vehicle_length else 4.5,
+                        "width": round(float(vehicle_width), 2) if vehicle_width else 2.0,
                         "type": str(vehicle_type) if vehicle_type else "Car"
                     })
                     
@@ -532,7 +578,6 @@ class DatasetParserService:
             return {}
 
         # 路径验证：检查 dataset_path 是否存在
-        from pathlib import Path
         dataset_dir = Path(dataset_path)
         if not dataset_dir.exists():
             logger.error(f"❌ 数据集路径不存在: {dataset_path}")
@@ -582,6 +627,10 @@ class DatasetParserService:
 
             logger.info(f"✅ 成功从tactics2d解析了 {len(participants)} 个参与者")
             logger.info(f"🕐 实际时间戳范围: {actual_stamp_range}")
+
+            # easy fix: highD 类型映射直接从 tracksMeta.csv 读取
+            if dataset_lower == "highd":
+                self._load_highd_tracks_meta_type_map(dataset_path=dataset_path, file_id=file_id)
             
             # 统计参与者详细信息
             self._log_participant_statistics(participants)
@@ -594,10 +643,11 @@ class DatasetParserService:
                     # 获取第一个参与者的第一个时间戳
                     sample_participant = next(iter(participants.values()))
                     get_state_method = None
-                    if hasattr(sample_participant, 'get_state_at_timestamp'):
-                        get_state_method = sample_participant.get_state_at_timestamp
-                    elif hasattr(sample_participant, 'get_state'):
-                        get_state_method = sample_participant.get_state
+                    # 复用统一的 API 检测逻辑（返回 per-participant wrapper）
+                    try:
+                        get_state_method, _, _ = self._detect_participant_api(sample_participant)
+                    except Exception:
+                        get_state_method = None
                     
                     if get_state_method and hasattr(sample_participant, 'trajectory'):
                         traj = sample_participant.trajectory
@@ -607,7 +657,7 @@ class DatasetParserService:
                             positions = []
                             for p_obj in participants.values():
                                 if p_obj.is_active(first_timestamp):
-                                    state = get_state_method(first_timestamp)
+                                    state = get_state_method(p_obj, first_timestamp)
                                     if state:
                                         try:
                                             x = getattr(state, 'x', None) or getattr(state, 'position_x', 0)

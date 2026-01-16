@@ -5,6 +5,7 @@ import logging
 from typing import Dict, List, Optional
 from pathlib import Path
 from dataclasses import dataclass
+import csv
 
 from app.config import settings
 
@@ -25,6 +26,7 @@ class DatasetFileInfo:
     preview_image: Optional[str] = None  # 预览图路径（如果存在）
     has_tracks: bool = False  # 是否有轨迹文件
     has_meta: bool = False  # 是否有元数据文件
+    duration_ms: Optional[int] = None  # recordingMeta.duration（秒）转换为毫秒（如果存在）
 
 class DataScanService:
     """数据扫描服务 - 扫描可用的地图和数据集文件"""
@@ -122,13 +124,29 @@ class DataScanService:
                 meta_file = dataset_dir / f"{file_id_str}_tracksMeta.csv"
                 recording_meta_file = dataset_dir / f"{file_id_str}_recordingMeta.csv"
                 preview_image = dataset_dir / f"{file_id_str}_highway.png"
+
+                duration_ms: Optional[int] = None
+                try:
+                    if recording_meta_file.exists():
+                        with recording_meta_file.open("r", encoding="utf-8") as f:
+                            reader = csv.DictReader(f)
+                            row = next(reader, None)
+                            if row:
+                                dur_s_raw = row.get("duration")
+                                if dur_s_raw is not None and str(dur_s_raw).strip() != "":
+                                    dur_s = float(str(dur_s_raw).strip())
+                                    # duration in highD recordingMeta is seconds (scientific notation)
+                                    duration_ms = max(0, int(round(dur_s * 1000)))
+                except Exception as e:
+                    logger.debug(f"读取 recordingMeta.duration 失败 {recording_meta_file}: {e}")
                 
                 dataset_files.append(DatasetFileInfo(
                     file_id=file_id,
                     dataset_path=str(dataset_dir.absolute()),
                     preview_image=str(preview_image.absolute()) if preview_image.exists() else None,
                     has_tracks=True,
-                    has_meta=meta_file.exists() and recording_meta_file.exists()
+                    has_meta=meta_file.exists() and recording_meta_file.exists(),
+                    duration_ms=duration_ms
                 ))
             except (ValueError, IndexError) as e:
                 logger.warning(f"解析数据集文件名失败 {tracks_file}: {e}")

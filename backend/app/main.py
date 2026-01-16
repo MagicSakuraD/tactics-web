@@ -6,6 +6,7 @@ import uuid
 import time
 from pathlib import Path
 from typing import Optional
+from starlette.middleware.cors import CORSMiddleware as StarletteCORSMiddleware
 
 # 配置日志 - 确保能在终端看到输出
 logging.basicConfig(
@@ -76,7 +77,17 @@ app.include_router(websocket_router)
 # 注意：这允许访问 data 目录下的文件，仅用于开发环境
 if settings.DEBUG:
     try:
-        app.mount("/static/data", StaticFiles(directory=str(settings.DATA_DIR)), name="data")
+        # ⚠️ FastAPI 的 CORSMiddleware 不会自动应用到 mount 的子应用（StaticFiles）
+        # 但 Three.js 贴图属于 WebGL 资源，跨域时必须有正确的 CORS 响应头，否则会加载失败并导致前端崩溃。
+        static_app = StaticFiles(directory=str(settings.DATA_DIR))
+        static_app = StarletteCORSMiddleware(
+            static_app,
+            allow_origins=settings.CORS_ORIGINS,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        app.mount("/static/data", static_app, name="data")
     except Exception as e:
         logger.warning(f"无法挂载静态文件服务: {e}")
 
@@ -111,7 +122,8 @@ async def get_data_files(dataset_type: Optional[str] = None):
                     dataset_path=d.dataset_path,
                     preview_image=f"/static/data/LevelX/{dataset_type}/data/{d.file_id:02d}_highway.png" if d.preview_image else None,
                     has_tracks=d.has_tracks,
-                    has_meta=d.has_meta
+                    has_meta=d.has_meta,
+                    duration_ms=getattr(d, "duration_ms", None)
                 )
                 for d in dataset_files
             ]
@@ -125,7 +137,8 @@ async def get_data_files(dataset_type: Optional[str] = None):
                         dataset_path=d.dataset_path,
                         preview_image=f"/static/data/LevelX/{ds_type}/data/{d.file_id:02d}_highway.png" if d.preview_image else None,
                         has_tracks=d.has_tracks,
-                        has_meta=d.has_meta
+                        has_meta=d.has_meta,
+                        duration_ms=getattr(d, "duration_ms", None)
                     )
                     for d in dataset_files
                 ]
